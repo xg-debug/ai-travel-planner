@@ -1,0 +1,241 @@
+import requests
+import logging
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+class AMapService:
+    """高德地图服务"""
+    
+    def __init__(self):
+        self.api_key = settings.AMAP_API_KEY
+        self.base_url = "https://restapi.amap.com/v3"
+        
+    def search_pois(self, keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
+        """
+        搜索POI（兴趣点）
+        
+        Args:
+            keyword: 搜索关键词
+            city: 城市名称
+            page: 页码
+            size: 每页数量
+            
+        Returns:
+            POI列表
+        """
+        if not self.api_key:
+            raise RuntimeError("AMAP_API_KEY 未配置，无法搜索 POI")
+        
+        try:
+            params = {
+                "key": self.api_key,
+                "keywords": f"{keyword} {city}",
+                "city": city,
+                "output": "json",
+                "offset": size,
+                "page": page,
+                "extensions": "all"
+            }
+            
+            response = requests.get(f"{self.base_url}/place/text", params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get("status") == "1" and data.get("pois"):
+                pois = []
+                for poi in data["pois"][:size]:
+                    pois.append({
+                        "id": poi.get("id"),
+                        "name": poi.get("name"),
+                        "lat": float(poi.get("location", "0,0").split(",")[1]),
+                        "lng": float(poi.get("location", "0,0").split(",")[0]),
+                        "address": poi.get("address", ""),
+                        "type": poi.get("type", ""),
+                        "rating": float(poi.get("biz_ext", {}).get("rating", "0")) or 4.0,
+                        "price": poi.get("biz_ext", {}).get("cost", "免费"),
+                        "description": f"{poi.get('name')}位于{poi.get('address', city)}",
+                        "opening_hours": poi.get("biz_ext", {}).get("opentime", "09:00-17:00"),
+                        "best_time": "上午",
+                        "tips": "建议提前查询最新信息"
+                    })
+                return pois
+            else:
+                logger.warning(f"No POIs found for {keyword} in {city}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error searching POIs: {e}")
+            raise
+    
+    def get_weather_forecast(self, city: str, days: int = 3) -> Dict[str, Any]:
+        """
+        获取天气预报
+        
+        Args:
+            city: 城市名称
+            days: 预报天数
+            
+        Returns:
+            天气预报数据
+        """
+        if not self.api_key:
+            raise RuntimeError("AMAP_API_KEY 未配置，无法查询天气")
+        
+        try:
+            # 先获取城市编码
+            city_params = {
+                "key": self.api_key,
+                "keywords": city,
+                "subdistrict": 0
+            }
+            
+            city_response = requests.get(f"{self.base_url}/config/district", params=city_params, timeout=10)
+            city_response.raise_for_status()
+            city_data = city_response.json()
+            
+            if city_data.get("status") == "1" and city_data.get("districts"):
+                adcode = city_data["districts"][0].get("adcode")
+                
+                # 获取天气
+                weather_params = {
+                    "key": self.api_key,
+                    "city": adcode,
+                    "extensions": "all" if days > 1 else "base"
+                }
+                
+                weather_response = requests.get(f"{self.base_url}/weather/weatherInfo", params=weather_params, timeout=10)
+                weather_response.raise_for_status()
+                weather_data = weather_response.json()
+                
+                if weather_data.get("status") == "1":
+                    return self._parse_weather_data(weather_data, city, days)
+                else:
+                    raise RuntimeError(f"城市 {city} 的天气数据不可用")
+            else:
+                raise RuntimeError(f"未找到城市编码: {city}")
+                
+        except Exception as e:
+            logger.error(f"Error getting weather: {e}")
+            raise
+    
+    def calculate_route(self, origin: str, destination: str, mode: str = "driving") -> Dict[str, Any]:
+        """
+        计算路线
+        
+        Args:
+            origin: 起点坐标或地址
+            destination: 终点坐标或地址
+            mode: 交通方式 (driving, walking, transit, bicycling)
+            
+        Returns:
+            路线信息
+        """
+        if not self.api_key:
+            raise RuntimeError("AMAP_API_KEY 未配置，无法计算路线")
+        
+        try:
+            params = {
+                "key": self.api_key,
+                "origin": origin,
+                "destination": destination,
+                "strategy": self._get_route_strategy(mode)
+            }
+            
+            response = requests.get(f"{self.base_url}/direction/{mode}", params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get("status") == "1" and data.get("route"):
+                route = data["route"]["paths"][0]
+                return {
+                    "distance": route.get("distance", 0),
+                    "duration": route.get("duration", 0),
+                    "steps": route.get("steps", []),
+                    "toll": route.get("toll", 0),
+                    "traffic_lights": route.get("traffic_lights", 0)
+                }
+            else:
+                raise RuntimeError(f"未找到从 {origin} 到 {destination} 的路线")
+                
+        except Exception as e:
+            logger.error(f"Error calculating route: {e}")
+            raise
+    
+    def _parse_weather_data(self, weather_data: Dict[str, Any], city: str, days: int) -> Dict[str, Any]:
+        """解析天气数据"""
+        result = {
+            "city": city,
+            "report_time": weather_data.get("forecasts", [{}])[0].get("reporttime", ""),
+            "forecast": []
+        }
+        
+        forecasts = weather_data.get("forecasts", [])
+        if forecasts:
+            casts = forecasts[0].get("casts", [])
+            for i, cast in enumerate(casts[:days]):
+                result["forecast"].append({
+                    "date": cast.get("date", ""),
+                    "condition": self._translate_weather(cast.get("dayweather", "")),
+                    "temperature": {
+                        "min": int(cast.get("nighttemp", 0)),
+                        "max": int(cast.get("daytemp", 0)),
+                        "avg": (int(cast.get("nighttemp", 0)) + int(cast.get("daytemp", 0))) // 2
+                    },
+                    "humidity": int(cast.get("dayhumidity", 60)),
+                    "wind_speed": int(cast.get("daypower", 10)),
+                    "icon": self._get_weather_icon(cast.get("dayweather", ""))
+                })
+        
+        return result
+    
+    def _translate_weather(self, weather: str) -> str:
+        """翻译天气描述"""
+        translations = {
+            "晴": "晴朗",
+            "多云": "多云",
+            "阴": "阴天",
+            "雨": "下雨",
+            "雪": "下雪",
+            "雾": "有雾",
+            "霾": "雾霾"
+        }
+        return translations.get(weather, weather)
+    
+    def _get_weather_icon(self, weather: str) -> str:
+        """获取天气图标"""
+        icons = {
+            "晴": "sunny",
+            "多云": "cloudy",
+            "阴": "cloudy",
+            "雨": "rainy",
+            "雪": "snowy",
+            "雾": "foggy",
+            "霾": "hazy"
+        }
+        return icons.get(weather, "unknown")
+    
+    def _get_route_strategy(self, mode: str) -> int:
+        """获取路线策略"""
+        strategies = {
+            "driving": 0,  # 速度优先
+            "walking": 0,  # 最短路径
+            "transit": 0,  # 最快捷
+            "bicycling": 0  # 最短路径
+        }
+        return strategies.get(mode, 0)
+    
+# 创建服务实例
+amap_service = AMapService()
+
+# 导出函数
+def search_pois(keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
+    return amap_service.search_pois(keyword, city, page, size)
+
+def get_weather_forecast(city: str, days: int = 3) -> Dict[str, Any]:
+    return amap_service.get_weather_forecast(city, days)
+
+def calculate_route(origin: str, destination: str, mode: str = "driving") -> Dict[str, Any]:
+    return amap_service.calculate_route(origin, destination, mode)
