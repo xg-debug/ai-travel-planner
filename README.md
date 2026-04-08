@@ -47,8 +47,8 @@ cd ai-travel-planner
 ```bash
 cd backend
 
-# 复制环境变量文件
-cp .env.example .env
+# 环境变量文件
+.env
 
 # 编辑 .env 文件，配置您的API密钥
 # 至少需要配置一个LLM API密钥（如OPENAI_API_KEY）
@@ -139,10 +139,10 @@ DEEPSEEK_API_KEY=your_deepseek_api_key
 GOOGLE_API_KEY=your_google_api_key
 
 # 默认LLM配置
-DEFAULT_LLM_PROVIDER=openai
-DEFAULT_LLM_MODEL=gpt-3.5-turbo
-LLM_TEMPERATURE=0.7
-LLM_MAX_TOKENS=2000
+DEFAULT_LLM_PROVIDER=
+DEFAULT_LLM_MODEL=
+LLM_TEMPERATURE=
+LLM_MAX_TOKENS=
 ```
 
 #### 地图服务
@@ -341,17 +341,6 @@ tail -f logs/app.log
 ## 📄 许可证
 
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
-
-## 🤝 贡献指南
-
-欢迎贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解如何参与项目开发。
-
-## 📞 支持与反馈
-
-如有问题或建议，请：
-1. 查看 [FAQ](docs/FAQ.md)
-2. 提交 [Issue](https://github.com/your-repo/issues)
-3. 加入讨论群
 
 ---
 
