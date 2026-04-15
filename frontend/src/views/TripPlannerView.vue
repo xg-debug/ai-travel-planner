@@ -1,7 +1,7 @@
 <template>
   <div class="min-h-screen">
     <!-- 使用现有的TravelNav组件 -->
-    <TravelNav />
+    <TravelNav @auth="openAuthModal" />
 
     <!-- 主要内容区域 -->
     <div class="relative overflow-hidden">
@@ -28,23 +28,6 @@
           <p class="text-lg text-gray-600 mb-8">
             输入您的旅行需求，AI将为您生成包含景点、餐饮、酒店的完整行程计划
           </p>
-          <div v-if="!authStore.isAuthenticated" class="flex items-center justify-center gap-3 mb-8">
-            <button
-              type="button"
-              class="px-5 py-2.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100"
-              @click="openAuthModal('login')"
-            >
-              登录
-            </button>
-            <button
-              type="button"
-              class="px-5 py-2.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
-              @click="openAuthModal('register')"
-            >
-              注册
-            </button>
-          </div>
-          
           <!-- 特色标签 -->
           <div class="flex flex-wrap justify-center gap-3 mb-10">
             <div class="px-4 py-2 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">
@@ -274,7 +257,7 @@
                   
                   <button
                     @click="generateTrip"
-                    :disabled="!canGenerate || isLoading"
+                    :disabled="isLoading"
                     class="w-full px-8 py-4 rounded-lg bg-blue-600 text-white font-bold text-lg transition-all duration-300 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600"
                   >
                     <div class="flex items-center justify-center space-x-3">
@@ -358,7 +341,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTripStore } from '@/stores/tripStore'
@@ -366,6 +349,7 @@ import { useAuthStore } from '@/stores/authStore'
 import AuthModal from '@/components/AuthModal.vue'
 import TravelNav from '@/components/TravelNav.vue'
 import TravelFooter from '../components/TravelFooter.vue'
+import type { TripRequest } from '@/types/trip'
 
 const router = useRouter()
 const tripStore = useTripStore()
@@ -376,7 +360,7 @@ const startDate = ref('')
 const endDate = ref('')
 const travelers = ref(2)
 const budget = ref(5000)
-const interests = ref([])
+const interests = ref<string[]>([])
 const additionalRequirements = ref('')
 const isLoading = ref(false)
 const errorMessage = ref('')
@@ -412,7 +396,7 @@ const decrementTravelers = () => {
   }
 }
 
-const toggleInterest = (interestId) => {
+const toggleInterest = (interestId: string) => {
   const index = interests.value.indexOf(interestId)
   if (index === -1) {
     interests.value.push(interestId)
@@ -424,6 +408,13 @@ const toggleInterest = (interestId) => {
 const generateTrip = async () => {
   // 清除之前的错误信息
   errorMessage.value = ''
+
+  // 未登录拦截：先引导登录
+  if (!authStore.isAuthenticated) {
+    openAuthModal('login')
+    errorMessage.value = '请先登录后再生成旅游规划'
+    return
+  }
   
   if (!canGenerate.value) {
     showValidationError()
@@ -445,15 +436,18 @@ const generateTrip = async () => {
   isLoading.value = true
 
   try {
-    const tripRequest = {
+    const mergedInterests = additionalRequirements.value.trim()
+      ? [...interests.value, additionalRequirements.value.trim()]
+      : interests.value
+
+    const tripRequest: TripRequest = {
       destination: destination.value,
       startDate: startDate.value,
       endDate: endDate.value,
       days: days,
       travelers: travelers.value,
-      interests: interests.value,
+      interests: mergedInterests,
       budget: budget.value,
-      additionalRequirements: additionalRequirements.value,
       preferences: {
         pace: 'moderate',
         accommodation: 'mid-range',
@@ -468,7 +462,7 @@ const generateTrip = async () => {
     if (tripStore.currentTrip) {
       router.push(`/trip/${tripStore.currentTrip.id}`)
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Failed to generate trip:', error)
     errorMessage.value = error.message || '生成行程失败，请检查网络连接或稍后重试'
     
@@ -484,8 +478,7 @@ const generateTrip = async () => {
 }
 
 const showValidationError = () => {
-  let message = '请填写以下必填信息：'
-  const errors = []
+  const errors: string[] = []
   
   if (!destination.value.trim()) errors.push('• 目的地')
   if (!startDate.value) errors.push('• 开始日期')
@@ -500,7 +493,7 @@ const calculateDays = () => {
   if (!startDate.value || !endDate.value) return 0
   const start = new Date(startDate.value)
   const end = new Date(endDate.value)
-  const diffTime = Math.abs(end - start)
+  const diffTime = Math.abs(end.getTime() - start.getTime())
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1
 }
 
@@ -509,7 +502,7 @@ const handleAuthSuccess = () => {
   console.log('Authentication successful')
 }
 
-const openAuthModal = (mode) => {
+const openAuthModal = (mode: 'login' | 'register') => {
   authMode.value = mode
   showAuthModal.value = true
 }

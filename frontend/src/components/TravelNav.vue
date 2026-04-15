@@ -21,13 +21,13 @@
           >
             首页
           </router-link>
-          <router-link 
-            to="/plan" 
+          <!-- <router-link 
+            to="/" 
             class="text-gray-600 hover:text-travel-primary transition-colors duration-300 font-medium"
             active-class="text-travel-primary"
           >
             规划行程
-          </router-link>
+          </router-link> -->
           <router-link 
             to="/map" 
             class="text-gray-600 hover:text-travel-primary transition-colors duration-300 font-medium"
@@ -39,11 +39,29 @@
 
         <!-- 用户操作 -->
         <div class="flex items-center space-x-4">
-          <button class="travel-btn-outline px-4 py-2 text-sm">
+          <button
+            v-if="!authStore.isAuthenticated"
+            type="button"
+            class="travel-btn-outline px-4 py-2 text-sm"
+            @click="emit('auth', 'login')"
+          >
             登录
           </button>
-          <button class="travel-btn px-4 py-2 text-sm">
-            开始规划
+          <button
+            v-if="!authStore.isAuthenticated"
+            type="button"
+            class="travel-btn px-4 py-2 text-sm"
+            @click="emit('auth', 'register')"
+          >
+            注册
+          </button>
+          <button
+            v-else
+            type="button"
+            class="px-4 py-2 text-sm rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
+            @click="authStore.logout"
+          >
+            退出
           </button>
         </div>
       </div>
@@ -52,7 +70,10 @@
 </template>
 
 <script setup>
-// 导航栏组件
+import { useAuthStore } from '@/stores/authStore'
+
+const emit = defineEmits(['auth'])
+const authStore = useAuthStore()
 </script>
 
 <style scoped>
