@@ -15,10 +15,19 @@
             </div>
           </div>
           <p class="font-chinese text-xl tracking-wider text-travel-ocean animate-pulse">
-            正在加载3D地图...
+            正在加载地图与路线...
           </p>
         </div>
       </div>
+
+      <div
+        v-if="mapError"
+        class="absolute top-20 left-1/2 z-30 -translate-x-1/2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow"
+      >
+        {{ mapError }}
+      </div>
+
+      <div id="amap-container" class="absolute inset-0 z-0"></div>
 
       <!-- 地图控制按钮 -->
       <div class="absolute top-4 left-4 z-20 space-y-3">
@@ -147,6 +156,15 @@
         </div>
       </div>
 
+      <div
+        v-if="routeSummary || isRouteLoading"
+        class="absolute bottom-28 left-4 z-20"
+      >
+        <div class="bg-white/92 backdrop-blur-sm rounded-xl border border-travel-sky/20 px-4 py-3 shadow-travel-card text-sm text-travel-gray">
+          {{ isRouteLoading ? '正在计算 LLM 路线...' : routeSummary }}
+        </div>
+      </div>
+
       <!-- 坐标显示 -->
       <div class="absolute bottom-4 left-4 z-20">
         <div class="bg-white/90 backdrop-blur-sm rounded-xl border border-travel-sky/20 p-4 shadow-travel-card">
@@ -158,41 +176,6 @@
         </div>
       </div>
     </div>
-
-  <!-- 真实地图容器 -->
-  <div v-if="!isLoading" class="absolute inset-0 z-0">
-    <!-- 地图容器 -->
-    <div id="amap-container" class="w-full h-full"></div>
-    
-    <!-- 地图覆盖层 -->
-    <div class="absolute inset-0 pointer-events-none">
-      <!-- 路线高亮 -->
-      <div v-if="currentRoute" class="absolute inset-0">
-        <!-- 路线动画效果 -->
-        <div class="absolute inset-0 bg-gradient-to-r from-travel-ocean/5 via-transparent to-travel-mint/5"></div>
-      </div>
-      
-      <!-- 景点连接线 -->
-      <svg class="absolute inset-0 w-full h-full pointer-events-none">
-        <defs>
-          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-            <polygon points="0 0, 10 3.5, 0 7" class="fill-travel-ocean/50" />
-          </marker>
-        </defs>
-        <path
-          v-for="(path, index) in routePaths"
-          :key="index"
-          :d="path.d"
-          class="stroke-travel-ocean/50 stroke-2 fill-none"
-          marker-end="url(#arrowhead)"
-          :style="{
-            strokeDasharray: '10,5',
-            animation: `dash ${2 + index}s linear infinite`
-          }"
-        />
-      </svg>
-    </div>
-  </div>
 
     <!-- Selected POI Panel -->
     <div
@@ -274,71 +257,109 @@ import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useTripStore } from '@/stores/tripStore'
 import { tripApi } from '@/services/api'
 
+const DEFAULT_COORDINATES = { lat: 39.9042, lng: 116.4074 }
+
 const mapContainer = ref(null)
 const isLoading = ref(true)
+const isRouteLoading = ref(false)
 const showPOIs = ref(true)
 const selectedPOI = ref(null)
-const coordinates = ref({ lat: 39.9042, lng: 116.4074 }) // 北京坐标
+const coordinates = ref({ ...DEFAULT_COORDINATES })
 const zoomLevel = ref(12)
 const mapInstance = ref(null)
 const markers = ref([])
-const routePaths = ref([])
-const currentRoute = ref(null)
+const routeLayers = ref([])
+const routeRequestToken = ref(0)
+const routeStats = ref({ distance: 0, duration: 0, segments: 0 })
+const mapError = ref('')
 
 const tripStore = useTripStore()
 
-// 从行程数据中获取POIs
+const hasValidPosition = (value) => {
+  if (!value) return false
+  return Number.isFinite(Number(value.lat)) && Number.isFinite(Number(value.lng))
+}
+
+// 从行程数据中获取可展示的 POI
 const tripPOIs = computed(() => {
   if (!tripStore.currentTrip) return []
-  
+
   const pois = []
   const seenNames = new Set()
-  
-  // 从行程活动中提取POIs
-  tripStore.currentTrip.days?.forEach(day => {
-    day.activities?.forEach(activity => {
-      if (activity.location && !seenNames.has(activity.location)) {
-        seenNames.add(activity.location)
-        pois.push({
-          id: `poi_${pois.length + 1}`,
-          name: activity.location,
-          type: activity.type || 'attraction',
-          description: activity.description || '',
-          rating: 4.5,
-          address: `${tripStore.currentTrip.destination}市${activity.location}`,
-          hours: '09:00-17:00',
-          priceRange: activity.cost ? `¥${activity.cost}` : '免费',
-          position: {
-            lat: coordinates.value.lat + (Math.random() * 0.1 - 0.05),
-            lng: coordinates.value.lng + (Math.random() * 0.1 - 0.05)
-          }
-        })
-      }
+
+  tripStore.currentTrip.days?.forEach((day) => {
+    day.activities?.forEach((activity, activityIndex) => {
+      if (!activity.location || seenNames.has(activity.location)) return
+      seenNames.add(activity.location)
+      pois.push({
+        id: `poi_${pois.length + 1}_${activityIndex + 1}`,
+        name: activity.location,
+        type: activity.type || 'attraction',
+        description: activity.description || '',
+        rating: 4.5,
+        address: activity.notes || `${tripStore.currentTrip.destination}市${activity.location}`,
+        hours: '09:00-17:00',
+        priceRange: activity.cost ? `¥${activity.cost}` : '免费',
+        position: hasValidPosition(activity.coordinates)
+          ? {
+              lat: Number(activity.coordinates.lat),
+              lng: Number(activity.coordinates.lng)
+            }
+          : null
+      })
     })
   })
-  
-  // 从推荐中提取POIs
-  tripStore.currentTrip.recommendations?.forEach(rec => {
-    if (rec.name && !seenNames.has(rec.name)) {
-      seenNames.add(rec.name)
-      pois.push({
-        id: `rec_${pois.length + 1}`,
-        name: rec.name,
-        type: rec.category || 'attraction',
-        description: rec.description || '',
-        rating: rec.rating || 4.5,
-        address: rec.location?.address || `${tripStore.currentTrip.destination}市${rec.name}`,
-        hours: rec.openingHours || '09:00-17:00',
-        priceRange: rec.priceRange || '免费',
-        position: {
-          lat: rec.location?.lat || coordinates.value.lat + (Math.random() * 0.1 - 0.05),
-          lng: rec.location?.lng || coordinates.value.lng + (Math.random() * 0.1 - 0.05)
-        }
-      })
-    }
+
+  tripStore.currentTrip.recommendations?.forEach((rec) => {
+    if (!rec.name || seenNames.has(rec.name)) return
+    const position = hasValidPosition(rec.location)
+      ? { lat: Number(rec.location.lat), lng: Number(rec.location.lng) }
+      : null
+
+    if (!position) return
+
+    seenNames.add(rec.name)
+    pois.push({
+      id: `rec_${pois.length + 1}`,
+      name: rec.name,
+      type: rec.category || 'attraction',
+      description: rec.description || '',
+      rating: rec.rating || 4.5,
+      address: `${tripStore.currentTrip.destination}市${rec.name}`,
+      hours: rec.openingHours || '09:00-17:00',
+      priceRange: rec.priceRange || '免费',
+      position
+    })
   })
-  
+
   return pois
+})
+
+// 只用真实活动坐标来画 LLM 路线，避免随机推荐点干扰
+const routePOIs = computed(() => {
+  if (!tripStore.currentTrip?.days?.length) return []
+
+  return tripStore.currentTrip.days.flatMap((day, dayIndex) =>
+    (day.activities || [])
+      .filter((activity) => hasValidPosition(activity.coordinates))
+      .map((activity, activityIndex) => ({
+        id: activity.id || `route_${dayIndex + 1}_${activityIndex + 1}`,
+        name: activity.location,
+        type: activity.type || 'attraction',
+        description: activity.description || '',
+        position: {
+          lat: Number(activity.coordinates.lat),
+          lng: Number(activity.coordinates.lng)
+        }
+      }))
+  )
+})
+
+const routeSummary = computed(() => {
+  if (!routeStats.value.segments) return ''
+  const distanceKm = (routeStats.value.distance / 1000).toFixed(1)
+  const durationMinutes = Math.round(routeStats.value.duration / 60)
+  return `LLM 路线 ${routeStats.value.segments} 段 · 约 ${distanceKm} km · ${durationMinutes} 分钟`
 })
 
 // 搜索POI数据
@@ -348,63 +369,89 @@ const searchQuery = ref('')
 const searchCategory = ref('all')
 
 onMounted(() => {
-  // 加载高德地图API
   loadAMapAPI()
 })
 
 const loadAMapAPI = () => {
-  // 检查是否已加载
+  mapError.value = ''
+
   if (window.AMap) {
     initMap()
     return
   }
-  
-  // 加载高德地图API
+
+  const amapKey = import.meta.env.VITE_AMAP_KEY || import.meta.env.VITE_AMAP_API_KEY
+  const securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE
+  if (!amapKey || String(amapKey).includes('YOUR_AMAP_KEY')) {
+    mapError.value = '未配置前端地图 Key。请在 frontend/.env 配置 VITE_AMAP_KEY 后重启前端。'
+    isLoading.value = false
+    return
+  }
+
+  if (securityCode) {
+    window._AMapSecurityConfig = {
+      ...(window._AMapSecurityConfig || {}),
+      securityJsCode: securityCode
+    }
+  }
+
+  const existingScript = document.getElementById('amap-sdk')
+  if (existingScript) {
+    existingScript.addEventListener('load', initMap, { once: true })
+    return
+  }
+
   const script = document.createElement('script')
+  script.id = 'amap-sdk'
   script.type = 'text/javascript'
-  script.src = `https://webapi.amap.com/maps?v=2.0&key=${import.meta.env.VITE_AMAP_KEY || 'YOUR_AMAP_KEY'}`
+  script.src = `https://webapi.amap.com/maps?v=2.0&key=${amapKey}`
   script.onload = () => {
-    // 加载地图工具
-    window.AMap.plugin([
-      'AMap.ToolBar',
-      'AMap.Scale',
-      'AMap.OverView',
-      'AMap.MapType',
-      'AMap.Geolocation',
-      'AMap.Driving'
-    ], () => {
+    window.AMap.plugin(['AMap.ToolBar', 'AMap.Scale', 'AMap.MapType', 'AMap.Geolocation'], () => {
       initMap()
     })
   }
   script.onerror = () => {
     console.error('Failed to load AMap API')
-    // 地图脚本加载失败时关闭 loading，提示用户检查地图配置
-    setTimeout(() => {
-      isLoading.value = false
-    }, 1000)
+    mapError.value = '地图加载失败，请检查高德 Key、域名白名单、安全码和网络连接。'
+    isLoading.value = false
   }
   document.head.appendChild(script)
 }
 
 const initMap = () => {
   try {
-    // 创建地图实例
-    mapInstance.value = new window.AMap.Map('amap-container', {
+    const container = document.getElementById('amap-container')
+    if (!container || container.clientWidth === 0 || container.clientHeight === 0) {
+      setTimeout(initMap, 120)
+      return
+    }
+
+    const firstPoi = routePOIs.value[0] || tripPOIs.value.find((poi) => poi.position)
+    if (firstPoi?.position) {
+      coordinates.value = {
+        lat: Number(firstPoi.position.lat),
+        lng: Number(firstPoi.position.lng)
+      }
+    }
+
+    if (mapInstance.value) {
+      mapInstance.value.destroy()
+      mapInstance.value = null
+    }
+
+    mapInstance.value = new window.AMap.Map(container, {
       zoom: zoomLevel.value,
       center: [coordinates.value.lng, coordinates.value.lat],
-      viewMode: '3D',
-      pitch: 45,
-      rotation: -15,
-      mapStyle: 'amap://styles/whitesmoke',
+      resizeEnable: true,
+      mapStyle: 'amap://styles/normal',
+      viewMode: '2D',
       features: ['bg', 'road', 'building', 'point']
     })
-    
-    // 添加地图控件
+
     mapInstance.value.addControl(new window.AMap.ToolBar())
     mapInstance.value.addControl(new window.AMap.Scale())
     mapInstance.value.addControl(new window.AMap.MapType())
-    
-    // 添加定位控件
+
     const geolocation = new window.AMap.Geolocation({
       enableHighAccuracy: true,
       timeout: 10000,
@@ -413,30 +460,37 @@ const initMap = () => {
       buttonPosition: 'RB'
     })
     mapInstance.value.addControl(geolocation)
-    
-    // 监听地图事件
+
     mapInstance.value.on('moveend', updateCoordinates)
     mapInstance.value.on('zoomend', updateZoomLevel)
-    
-    // 添加POI标记
-    addPOIMarkers()
-    
-    // 绘制路线
-    drawRoute()
-    
-    isLoading.value = false
-    
+    mapInstance.value.on('complete', async () => {
+      if (!mapInstance.value) return
+      mapInstance.value.resize()
+      updateCoordinates()
+      updateZoomLevel()
+      addPOIMarkers()
+      await drawRoute()
+      isLoading.value = false
+    })
   } catch (error) {
     console.error('Failed to initialize map:', error)
-    // 地图初始化失败时关闭 loading，提示用户重试
-    setTimeout(() => {
-      isLoading.value = false
-    }, 1000)
+    mapError.value = '地图初始化失败，请检查高德配置后重试。'
+    isLoading.value = false
   }
 }
 
+const clearRouteLayers = () => {
+  routeLayers.value.forEach((layer) => layer.setMap(null))
+  routeLayers.value = []
+  routeStats.value = { distance: 0, duration: 0, segments: 0 }
+}
+
 onUnmounted(() => {
-  // 销毁地图实例
+  clearRouteLayers()
+  if (window.searchMarkers) {
+    window.searchMarkers.forEach((marker) => marker.setMap(null))
+    window.searchMarkers = []
+  }
   if (mapInstance.value) {
     mapInstance.value.destroy()
     mapInstance.value = null
@@ -444,42 +498,45 @@ onUnmounted(() => {
 })
 
 watch(
-  tripPOIs,
-  () => {
+  [tripPOIs, routePOIs],
+  async () => {
     if (!mapInstance.value) return
     addPOIMarkers()
-    drawRoute()
+    await drawRoute()
   },
   { deep: true }
 )
 
 const toggleMapStyle = () => {
   if (!mapInstance.value) return
-  
+
   const currentStyle = mapInstance.value.getMapStyle()
-  const newStyle = currentStyle.includes('whitesmoke') 
-    ? 'amap://styles/normal' 
+  const newStyle = currentStyle.includes('whitesmoke')
+    ? 'amap://styles/normal'
     : 'amap://styles/whitesmoke'
-  
+
   mapInstance.value.setMapStyle(newStyle)
 }
 
 const resetView = () => {
+  const firstPoi = routePOIs.value[0] || tripPOIs.value.find((poi) => poi.position)
+  if (mapInstance.value && firstPoi?.position) {
+    mapInstance.value.setZoomAndCenter(13, [firstPoi.position.lng, firstPoi.position.lat])
+    return
+  }
+
+  coordinates.value = { ...DEFAULT_COORDINATES }
+  zoomLevel.value = 12
   if (mapInstance.value) {
     mapInstance.value.setZoomAndCenter(12, [coordinates.value.lng, coordinates.value.lat])
-  } else {
-    coordinates.value = { lat: 39.9042, lng: 116.4074 }
-    zoomLevel.value = 12
   }
 }
 
 const togglePOIs = () => {
   showPOIs.value = !showPOIs.value
-  if (mapInstance.value) {
-    markers.value.forEach(marker => {
-      marker.setMap(showPOIs.value ? mapInstance.value : null)
-    })
-  }
+  markers.value.forEach((marker) => {
+    marker.setMap(showPOIs.value ? mapInstance.value : null)
+  })
 }
 
 const selectPOI = (poi) => {
@@ -675,14 +732,14 @@ const updateZoomLevel = () => {
 }
 
 const addPOIMarkers = () => {
-  if (!mapInstance.value || !tripPOIs.value.length) return
+  if (!mapInstance.value) return
   
   // 清除现有标记
   markers.value.forEach(marker => marker.setMap(null))
   markers.value = []
   
   tripPOIs.value.forEach(poi => {
-    if (!poi.position) return
+    if (!poi.position || !Number.isFinite(Number(poi.position.lat)) || !Number.isFinite(Number(poi.position.lng))) return
     
     const marker = new window.AMap.Marker({
       position: [poi.position.lng, poi.position.lat],
@@ -726,44 +783,103 @@ const createMarkerContent = (poi) => {
   `
 }
 
-const drawRoute = () => {
-  if (!mapInstance.value || !tripPOIs.value.length) return
-  
-  // 清除现有路线
-  routePaths.value = []
-  currentRoute.value = null
-  
-  // 如果有多个POI，绘制连接线
-  if (tripPOIs.value.length > 1) {
-    const points = tripPOIs.value
-      .filter(poi => poi.position)
-      .map(poi => [poi.position.lng, poi.position.lat])
-    
-    if (points.length > 1) {
-      // 创建驾车路线规划
-      const driving = new window.AMap.Driving({
-        map: mapInstance.value,
-        policy: window.AMap.DrivingPolicy.LEAST_TIME,
-        showTraffic: true,
-        hideMarkers: true
+const buildRoutePathFromSteps = (steps = []) => {
+  const path = []
+
+  steps.forEach((step) => {
+    const points = String(step?.polyline || '')
+      .split(';')
+      .map((pair) => {
+        const [lng, lat] = pair.split(',').map(Number)
+        return Number.isFinite(lat) && Number.isFinite(lng) ? [lng, lat] : null
       })
-      
-      // 规划路线
-      driving.search(points, (status, result) => {
-        if (status === 'complete' && result.routes && result.routes.length) {
-          currentRoute.value = result.routes[0]
-          
-          // 创建SVG路径
-          const path = currentRoute.value.steps.reduce((d, step, index) => {
-            const start = step.start_location
-            const end = step.end_location
-            const command = index === 0 ? 'M' : 'L'
-            return `${d} ${command} ${start.lng},${start.lat} L ${end.lng},${end.lat}`
-          }, '')
-          
-          routePaths.value.push({ d: path })
-        }
+      .filter(Boolean)
+
+    points.forEach((point) => {
+      const lastPoint = path[path.length - 1]
+      if (!lastPoint || lastPoint[0] !== point[0] || lastPoint[1] !== point[1]) {
+        path.push(point)
+      }
+    })
+  })
+
+  return path
+}
+
+const drawRoute = async () => {
+  if (!mapInstance.value) return
+
+  const requestToken = Date.now()
+  routeRequestToken.value = requestToken
+  clearRouteLayers()
+
+  const points = routePOIs.value
+    .filter((poi) => hasValidPosition(poi.position))
+    .map((poi) => [Number(poi.position.lng), Number(poi.position.lat)])
+
+  if (points.length === 1) {
+    mapInstance.value.setZoomAndCenter(14, points[0])
+    return
+  }
+
+  if (points.length < 2) return
+
+  isRouteLoading.value = true
+
+  try {
+    const segmentResponses = await Promise.all(
+      points.slice(0, -1).map((point, index) =>
+        tripApi
+          .calculateRoute(`${point[0]},${point[1]}`, `${points[index + 1][0]},${points[index + 1][1]}`, 'driving')
+          .catch(() => null)
+      )
+    )
+
+    if (routeRequestToken.value !== requestToken || !mapInstance.value) return
+
+    let totalDistance = 0
+    let totalDuration = 0
+    const overlays = [...markers.value]
+
+    segmentResponses.forEach((segment, index) => {
+      let path = []
+      if (segment?.steps?.length) {
+        path = buildRoutePathFromSteps(segment.steps)
+        totalDistance += Number(segment.distance || 0)
+        totalDuration += Number(segment.duration || 0)
+      }
+      if (path.length < 2) {
+        path = [points[index], points[index + 1]]
+      }
+
+      const layer = new window.AMap.Polyline({
+        path,
+        strokeColor: '#2563eb',
+        strokeOpacity: 0.92,
+        strokeWeight: 6,
+        strokeStyle: 'solid',
+        lineJoin: 'round',
+        lineCap: 'round',
+        showDir: true,
+        zIndex: 80
       })
+      layer.setMap(mapInstance.value)
+      routeLayers.value.push(layer)
+      overlays.push(layer)
+    })
+
+    routeStats.value = {
+      distance: totalDistance,
+      duration: totalDuration,
+      segments: routeLayers.value.length
+    }
+
+    if (overlays.length) {
+      mapInstance.value.setFitView(overlays, false, [80, 360, 80, 120])
+    }
+  } finally {
+    if (routeRequestToken.value === requestToken) {
+      isRouteLoading.value = false
     }
   }
 }
@@ -808,17 +924,11 @@ const parsePoiCost = (text) => {
   background: rgba(30, 136, 229, 0.5);
 }
 
-/* 路线动画 */
-@keyframes dash {
-  to {
-    stroke-dashoffset: -100;
-  }
-}
-
 /* 高德地图容器样式 */
 #amap-container {
   width: 100%;
   height: 100%;
+  background: linear-gradient(180deg, rgba(186, 230, 253, 0.55) 0%, rgba(255, 255, 255, 0.95) 100%);
 }
 
 /* 地图标记样式 */

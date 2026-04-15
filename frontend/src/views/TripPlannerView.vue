@@ -47,6 +47,35 @@
 
         <!-- 行程规划表单 -->
         <div class="max-w-4xl mx-auto">
+          <div
+            v-if="authStore.isAuthenticated && (tripStore.currentTrip || tripStore.tripHistory.length)"
+            class="mb-6 rounded-xl border border-blue-100 bg-blue-50 p-4"
+          >
+            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div class="text-sm font-medium text-blue-900">已有可查看的行程</div>
+                <div class="text-xs text-blue-700">
+                  最近一次：{{ tripStore.currentTrip?.destination || tripStore.tripHistory[0]?.destination || '未命名行程' }}
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  v-if="tripStore.currentTrip"
+                  @click="openCurrentTrip"
+                  class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                >
+                  查看当前行程
+                </button>
+                <button
+                  @click="router.push('/history')"
+                  class="rounded-lg border border-blue-300 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+                >
+                  查看历史行程
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div class="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
             <!-- 表单头部 -->
             <div class="bg-slate-900 px-8 py-6">
@@ -236,21 +265,27 @@
                       </div>
                     </div>
                     <div class="mt-3 text-xs text-blue-700">
-                      <div class="flex items-center space-x-2">
-                        <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                        <span>分析目的地信息</span>
+                      <div v-if="tripStore.streamingStatus" class="mb-3 text-sm font-medium text-blue-800">
+                        {{ tripStore.streamingStatus }}
                       </div>
-                      <div class="flex items-center space-x-2 mt-1">
-                        <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                        <span>规划景点路线</span>
-                      </div>
-                      <div class="flex items-center space-x-2 mt-1">
-                        <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                        <span>推荐餐饮住宿</span>
-                      </div>
-                      <div class="flex items-center space-x-2 mt-1">
-                        <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                        <span>计算预算费用</span>
+                      <div class="space-y-2">
+                        <div
+                          v-for="step in tripStore.streamSteps"
+                          :key="step.key"
+                          class="flex items-center space-x-2 rounded-md px-2 py-1"
+                          :class="{
+                            'bg-blue-100 text-blue-900': step.status === 'active',
+                            'text-emerald-700': step.status === 'done',
+                            'text-red-700': step.status === 'error',
+                            'text-blue-600': step.status === 'pending'
+                          }"
+                        >
+                          <span v-if="step.status === 'done'" class="font-semibold">✓</span>
+                          <span v-else-if="step.status === 'active'" class="inline-block h-2 w-2 rounded-full bg-blue-600 animate-pulse"></span>
+                          <span v-else-if="step.status === 'error'" class="font-semibold">!</span>
+                          <span v-else class="inline-block h-2 w-2 rounded-full bg-blue-300"></span>
+                          <span>{{ step.label }}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -498,12 +533,16 @@ const calculateDays = () => {
 }
 
 const handleAuthSuccess = () => {
-  // 认证成功后的处理
-  console.log('Authentication successful')
+  errorMessage.value = ''
 }
 
 const openAuthModal = (mode: 'login' | 'register') => {
   authMode.value = mode
   showAuthModal.value = true
+}
+
+const openCurrentTrip = () => {
+  if (!tripStore.currentTrip) return
+  router.push(`/trip/${tripStore.currentTrip.id}`)
 }
 </script>

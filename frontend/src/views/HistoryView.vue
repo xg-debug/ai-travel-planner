@@ -162,7 +162,7 @@
               <div class="flex items-center space-x-2">
                 <button
                   @click="viewTrip(trip.id)"
-                  class="px-4 py-2 rounded-lg bg-travel-ocean text-white text-sm font-medium hover:bg-travel-ocean/90 transition-colors duration-300"
+                  class="px-4 py-2 rounded-lg bg-travel-ocean text-black text-sm font-medium hover:bg-travel-ocean/90 transition-colors duration-300"
                 >
                   查看详情
                 </button>
@@ -274,6 +274,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTripStore } from '@/stores/tripStore'
+import { useAuthStore } from '@/stores/authStore'
 
 // 定义接口，增强 TS 类型提示
 interface Activity {
@@ -300,6 +301,7 @@ interface Trip {
 
 const router = useRouter()
 const tripStore = useTripStore()
+const authStore = useAuthStore()
 
 const sortBy = ref<'date' | 'budget' | 'days'>('date')
 const viewMode = ref<'grid' | 'list'>('grid')
@@ -397,7 +399,11 @@ const formatRelativeDate = (dateString: string | undefined) => {
 }
 
 onMounted(() => {
-  tripStore.loadFromLocalStorage()
+  if (!authStore.isAuthenticated) {
+    router.push('/')
+    return
+  }
+  tripStore.loadTripsFromServer()
 })
 </script>
 

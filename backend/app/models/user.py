@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -22,33 +22,9 @@ class User(Base):
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    preferences: Mapped["UserPreference"] = relationship(
-        back_populates="user", uselist=False, cascade="all, delete-orphan"
-    )
     reset_tokens: Mapped[list["PasswordResetToken"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-
-
-class UserPreference(Base):
-    __tablename__ = "user_preferences"
-
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    theme: Mapped[str] = mapped_column(String(20), default="light", nullable=False)
-    language: Mapped[str] = mapped_column(String(10), default="zh-CN", nullable=False)
-    currency: Mapped[str] = mapped_column(String(10), default="CNY", nullable=False)
-    notifications_json: Mapped[str] = mapped_column(
-        Text, default='{"email": true, "push": true, "tripUpdates": true, "recommendations": true}', nullable=False
-    )
-    travel_style_json: Mapped[str] = mapped_column(
-        Text,
-        default='{"pace": "moderate", "accommodation": "mid-range", "food": "mixed", "transportation": "mixed"}',
-        nullable=False,
-    )
-
-    user: Mapped[User] = relationship(back_populates="preferences")
 
 
 class PasswordResetToken(Base):

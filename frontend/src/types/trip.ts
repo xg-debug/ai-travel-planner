@@ -24,6 +24,7 @@ export interface Activity {
   duration: number // in minutes
   cost: number
   notes?: string
+  image?: string
   coordinates?: {
     lat: number
     lng: number
@@ -89,30 +90,13 @@ export interface Trip {
   days: TripDay[]
   weather: WeatherForecast[]
   recommendations: POI[]
+  hotels?: POI[]
   budget: BudgetBreakdown
   plan?: string
   createdAt: string
   updatedAt: string
   notes?: string
   status?: 'draft' | 'planned' | 'in-progress' | 'completed' | 'cancelled'
-}
-
-export interface UserPreferences {
-  theme: 'light' | 'dark' | 'auto'
-  language: string
-  currency: string
-  notifications: {
-    email: boolean
-    push: boolean
-    tripUpdates: boolean
-    recommendations: boolean
-  }
-  travelStyle: {
-    pace: 'relaxed' | 'moderate' | 'fast'
-    accommodation: 'budget' | 'mid-range' | 'luxury'
-    food: 'local' | 'international' | 'mixed'
-    transportation: 'public' | 'private' | 'mixed'
-  }
 }
 
 export interface APIResponse<T> {
@@ -161,6 +145,7 @@ export interface TripResponse {
     price_range: string
     tips: string
   }>
+  hotels?: Array<Record<string, any>>
   estimated_budget: {
     total: number
     per_person: number

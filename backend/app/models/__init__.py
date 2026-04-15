@@ -1,4 +1,4 @@
-from app.models.feedback_orm import FeedbackORM
-from app.models.user import PasswordResetToken, User, UserPreference
+from app.models.trip_plan import TripPlan
+from app.models.user import PasswordResetToken, User
 
-__all__ = ["User", "UserPreference", "PasswordResetToken", "FeedbackORM"]
+__all__ = ["User", "PasswordResetToken", "TripPlan"]

@@ -69,12 +69,11 @@
 
           <form class="space-y-4" @submit.prevent="handleSubmit">
             <div v-if="activeMode === 'register'">
-              <label class="block text-sm font-medium text-slate-700 mb-2">姓名</label>
+              <label class="block text-sm font-medium text-slate-700 mb-2">姓名（可选）</label>
               <input
                 v-model="form.name"
                 type="text"
-                required
-                placeholder="请输入姓名"
+                placeholder="不填将默认使用邮箱前缀"
                 class="w-full h-11 px-3 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-500"
               />
             </div>

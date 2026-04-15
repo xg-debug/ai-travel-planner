@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     DEEPSEEK_API_KEY: Optional[str] = os.getenv("DEEPSEEK_API_KEY")
     GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
+    UNSPLASH_ACCESS_KEY: Optional[str] = os.getenv("UNSPLASH_ACCESS_KEY")
+    UNSPLASH_SECRET_KEY: Optional[str] = os.getenv("UNSPLASH_SECRET_KEY")
     
     # 地图服务配置
     AMAP_API_KEY: Optional[str] = os.getenv("AMAP_API_KEY")
@@ -45,11 +47,13 @@ class Settings(BaseSettings):
     # 旅游数据API
     TRIP_ADVISOR_API_KEY: Optional[str] = os.getenv("TRIP_ADVISOR_API_KEY")
     YELP_API_KEY: Optional[str] = os.getenv("YELP_API_KEY")
-    
     # 安全配置
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "720"))
+    ACCESS_TOKEN_EXPIRE_MINUTES_REMEMBER_ME: int = int(
+        os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES_REMEMBER_ME", "43200")
+    )
     
     # 缓存配置
     CACHE_TTL: int = 3600  # 1小时
@@ -70,6 +74,9 @@ class Settings(BaseSettings):
     DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gpt-3.5-turbo")
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))
+    LLM_REQUEST_TIMEOUT_SECONDS: int = int(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "45"))
+    LLM_MAX_RETRIES: int = int(os.getenv("LLM_MAX_RETRIES", "1"))
+    ENABLE_LLM_RECOMMENDATION: bool = os.getenv("ENABLE_LLM_RECOMMENDATION", "false").lower() == "true"
     
     # 行程规划配置
     MAX_TRIP_DAYS: int = 30

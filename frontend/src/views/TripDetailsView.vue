@@ -69,6 +69,27 @@
           </div>
         </div>
 
+        <div class="mb-8 grid gap-6 lg:grid-cols-3">
+          <div class="lg:col-span-2 rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+            <h2 class="mb-3 text-lg font-bold text-gray-900">行程概览</h2>
+            <p class="whitespace-pre-line text-sm leading-7 text-gray-700">
+              {{ trip.plan || '已生成行程，可在下方按天查看并编辑细节。' }}
+            </p>
+          </div>
+          <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+            <h2 class="mb-3 text-lg font-bold text-gray-900">景点地图</h2>
+            <p class="mb-4 text-sm text-gray-600">
+              已识别可定位活动：{{ mappedActivityCount }} 个
+            </p>
+            <button
+              @click="router.push('/map')"
+              class="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              打开地图查看路线
+            </button>
+          </div>
+        </div>
+
         <div class="grid lg:grid-cols-3 gap-8">
           <div class="lg:col-span-2 space-y-8">
             <div class="flex space-x-3 overflow-x-auto pb-3">
@@ -106,6 +127,16 @@
                   </div>
 
                   <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                    <div v-if="activity.image" class="mb-3 overflow-hidden rounded-lg border border-gray-100">
+                      <img
+                        :src="getActivityImage(activity, index)"
+                        :alt="activity.title"
+                        class="h-44 w-full object-cover"
+                        loading="lazy"
+                        decoding="async"
+                        @error="handleImageError"
+                      />
+                    </div>
                     <div class="flex justify-between mb-2">
                       <div class="font-bold text-lg text-gray-800">{{ activity.time }} - {{ activity.title }}</div>
                       <div class="text-teal-600 font-medium">¥{{ activity.cost }}</div>
@@ -208,6 +239,13 @@ const authStore = useAuthStore()
 
 // 获取 Store 中的数据
 const trip = computed(() => tripStore.currentTrip)
+const mappedActivityCount = computed(() => {
+  if (!trip.value?.days?.length) return 0
+  return trip.value.days.reduce((sum: number, day: any) => {
+    const count = (day.activities || []).filter((a: any) => a.coordinates?.lat && a.coordinates?.lng).length
+    return sum + count
+  }, 0)
+})
 
 // ===== UI 控制状态 =====
 const showAuthModal = ref(false)
@@ -358,6 +396,22 @@ const getWeatherIcon = (condition: string) => {
   return iconMap[condition] || '🌤️'
 }
 
+const fallbackImage = 'https://picsum.photos/seed/travel-fallback/1200/800'
+
+const getActivityImage = (activity: any, index: number) => {
+  if (activity?.image) return activity.image
+  const seed = encodeURIComponent(`${trip.value?.destination || 'trip'}-${activeDayIndex.value}-${index}`)
+  return `https://picsum.photos/seed/${seed}/1200/800`
+}
+
+const handleImageError = (event: Event) => {
+  const target = event.target as HTMLImageElement | null
+  if (!target) return
+  if (target.src !== fallbackImage) {
+    target.src = fallbackImage
+  }
+}
+
 
 // ===== 导出与工具方法 =====
 const formatDate = (date: string) => date ? new Date(date).toLocaleDateString('zh-CN') : ''
@@ -448,6 +502,10 @@ onMounted(() => {
     tripStore.loadTrip(tripId)
   }
   // 首次加载若存在天气数据，生成一下 Tips
-  if (trip.value?.weather) generateWeatherTips(trip.value.weather)
+  if (trip.value?.weather?.length) {
+    generateWeatherTips(trip.value.weather)
+  } else {
+    refreshWeather()
+  }
 })
 </script>

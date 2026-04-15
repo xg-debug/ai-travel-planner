@@ -35,6 +35,22 @@
           >
             旅行地图
           </router-link>
+          <router-link 
+            v-if="authStore.isAuthenticated"
+            to="/history" 
+            class="text-gray-600 hover:text-travel-primary transition-colors duration-300 font-medium"
+            active-class="text-travel-primary"
+          >
+            行程历史
+          </router-link>
+          <button
+            v-else
+            type="button"
+            class="text-gray-600 hover:text-travel-primary transition-colors duration-300 font-medium"
+            @click="emit('auth', 'login')"
+          >
+            行程历史
+          </button>
         </div>
 
         <!-- 用户操作 -->

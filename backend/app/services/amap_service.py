@@ -1,10 +1,26 @@
 import requests
 import logging
+import re
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None:
+            return default
+        text = str(value).strip()
+        if not text:
+            return default
+        matched = re.search(r"-?\d+", text)
+        if not matched:
+            return default
+        return int(matched.group())
+    except Exception:
+        return default
 
 class AMapService:
     """高德地图服务"""
@@ -47,6 +63,10 @@ class AMapService:
             if data.get("status") == "1" and data.get("pois"):
                 pois = []
                 for poi in data["pois"][:size]:
+                    photos = poi.get("photos") or []
+                    image_url = ""
+                    if photos and isinstance(photos, list):
+                        image_url = photos[0].get("url", "") or ""
                     pois.append({
                         "id": poi.get("id"),
                         "name": poi.get("name"),
@@ -58,6 +78,7 @@ class AMapService:
                         "price": poi.get("biz_ext", {}).get("cost", "免费"),
                         "description": f"{poi.get('name')}位于{poi.get('address', city)}",
                         "opening_hours": poi.get("biz_ext", {}).get("opentime", "09:00-17:00"),
+                        "image_url": image_url,
                         "best_time": "上午",
                         "tips": "建议提前查询最新信息"
                     })
@@ -180,12 +201,12 @@ class AMapService:
                     "date": cast.get("date", ""),
                     "condition": self._translate_weather(cast.get("dayweather", "")),
                     "temperature": {
-                        "min": int(cast.get("nighttemp", 0)),
-                        "max": int(cast.get("daytemp", 0)),
-                        "avg": (int(cast.get("nighttemp", 0)) + int(cast.get("daytemp", 0))) // 2
+                        "min": _safe_int(cast.get("nighttemp"), 0),
+                        "max": _safe_int(cast.get("daytemp"), 0),
+                        "avg": (_safe_int(cast.get("nighttemp"), 0) + _safe_int(cast.get("daytemp"), 0)) // 2
                     },
-                    "humidity": int(cast.get("dayhumidity", 60)),
-                    "wind_speed": int(cast.get("daypower", 10)),
+                    "humidity": _safe_int(cast.get("dayhumidity"), 60),
+                    "wind_speed": _safe_int(cast.get("daypower"), 3),
                     "icon": self._get_weather_icon(cast.get("dayweather", ""))
                 })
         

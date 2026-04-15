@@ -1,14 +1,18 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+import logging
+import uuid
 import os
 from app.api.trip import router as trip_router
-from app.api.feedback import router as feedback_router
 from app.api.auth import router as auth_router
 from app.api.users import router as users_router
 from app.core.database import Base, engine
 import app.models  # noqa: F401
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -33,7 +37,6 @@ if os.path.exists(settings.UPLOAD_DIR):
 
 # 注册路由
 app.include_router(trip_router, prefix="/api/trip", tags=["trip"])
-app.include_router(feedback_router, prefix="/api/feedback", tags=["feedback"])
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(users_router, prefix="/api/users", tags=["users"])
 
@@ -58,3 +61,15 @@ def health_check():
         "service": settings.APP_NAME,
         "version": settings.APP_VERSION
     }
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_request: Request, exc: Exception):
+    request_id = str(uuid.uuid4())[:8]
+    logger.exception("Unhandled exception request_id=%s error=%s", request_id, exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"服务暂时不可用，请稍后重试（错误编号: {request_id}）"
+        },
+    )

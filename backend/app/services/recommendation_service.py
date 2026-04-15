@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 from app.core.llm import recommendation_llm
+from app.core.config import settings
 import json
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,11 @@ class RecommendationService:
             推荐列表
         """
         logger.info(f"Getting recommendations for {city} with preferences: {preferences}")
-        
+
+        # 默认走规则推荐，避免额外 LLM 延迟；需要时可通过环境变量开启 LLM 推荐增强。
+        if not settings.ENABLE_LLM_RECOMMENDATION:
+            return self._get_rule_based_recommendations(city, preferences, plan)
+
         try:
             # 使用LLM生成智能推荐
             prompt = self._build_recommendation_prompt(city, preferences, plan)

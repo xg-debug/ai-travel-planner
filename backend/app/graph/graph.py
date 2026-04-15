@@ -1,78 +1,53 @@
 from typing import Dict, Any
 import logging
+from langgraph.graph import END, StateGraph
+
+from app.agents import (
+    hotel_search_agent_node,
+    planning_agent_node,
+    poi_detail_agent_node,
+    query_agent_node,
+    scenic_search_agent_node,
+)
+from app.graph.nodes import budget_node, summary_node, weather_tool_step
+from app.graph.state import TripState
 
 logger = logging.getLogger(__name__)
 
+def build_trip_graph():
+    workflow = StateGraph(TripState)
+    workflow.add_node("query_agent", query_agent_node)
+    workflow.add_node("scenic_agent", scenic_search_agent_node)
+    workflow.add_node("hotel_agent", hotel_search_agent_node)
+    workflow.add_node("planning_agent", planning_agent_node)
+    workflow.add_node("poi_agent", poi_detail_agent_node)
+    workflow.add_node("weather_tool", weather_tool_step)
+    workflow.add_node("budget", budget_node)
+    workflow.add_node("summary", summary_node)
+
+    workflow.set_entry_point("query_agent")
+    workflow.add_edge("query_agent", "scenic_agent")
+    workflow.add_edge("scenic_agent", "hotel_agent")
+    workflow.add_edge("hotel_agent", "planning_agent")
+    workflow.add_edge("planning_agent", "poi_agent")
+    workflow.add_edge("poi_agent", "weather_tool")
+    workflow.add_edge("weather_tool", "budget")
+    workflow.add_edge("budget", "summary")
+    workflow.add_edge("summary", END)
+
+    return workflow.compile()
+
+
 class TripPlanner:
-    """简化的旅行规划器"""
-    
+    """旅行规划器。"""
+
     def __init__(self):
-        from app.graph.nodes import (
-            validation_node,
-            planner_node,
-            poi_node,
-            weather_node,
-            recommendation_node,
-            budget_node,
-            summary_node
-        )
-        self.nodes = {
-            "validate": validation_node,
-            "planner": planner_node,
-            "poi": poi_node,
-            "weather": weather_node,
-            "recommendations": recommendation_node,
-            "budget": budget_node,
-            "summary": summary_node
-        }
-    
+        self.graph = build_trip_graph()
+
     def plan_trip(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """执行旅行规划流程"""
         logger.info("Starting trip planning process")
-        
-        try:
-            # 1. 验证输入
-            state = self.nodes["validate"](state)
-            
-            # 2. 规划行程
-            state.update(self.nodes["planner"](state))
-            
-            # 3. 获取POI信息
-            state.update(self.nodes["poi"](state))
-            
-            # 4. 获取天气信息
-            state.update(self.nodes["weather"](state))
-            
-            # 5. 生成推荐
-            state.update(self.nodes["recommendations"](state))
-            
-            # 6. 估算预算
-            state.update(self.nodes["budget"](state))
-            
-            # 7. 生成总结
-            state.update(self.nodes["summary"](state))
-            
-            logger.info("Trip planning completed successfully")
-            return state
-            
-        except Exception as e:
-            logger.error(f"Error in trip planning: {e}")
-            # 返回基本结果
-            return {
-                "final_output": f"行程规划失败: {str(e)}",
-                "poi_data": {},
-                "plan": [],
-                "weather_data": {},
-                "recommendations": [],
-                "estimated_budget": {}
-            }
+        return self.graph.invoke(state)
 
-# 创建规划器实例
+
 trip_planner = TripPlanner()
-
-# 兼容旧接口
-class MockGraph:
-    def invoke(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        return trip_planner.plan_trip(state)
-
-app_trip_graph = MockGraph()
+app_trip_graph = trip_planner.graph

@@ -29,7 +29,7 @@ const router = createRouter({
       path: '/trip/:id',
       name: 'trip',
       component: TripDetailsView,
-      meta: { title: '行程详情' }
+      meta: { title: '行程详情', requiresAuth: true }
     },
     {
       path: '/map',
@@ -41,7 +41,7 @@ const router = createRouter({
       path: '/history',
       name: 'history',
       component: HistoryView,
-      meta: { title: '旅行历史' }
+      meta: { title: '旅行历史', requiresAuth: true }
     }
   ]
 })
@@ -49,6 +49,13 @@ const router = createRouter({
 // Update document title on route change
 router.beforeEach((to, _from, next) => {
   document.title = to.meta.title as string || '智能旅行规划器'
+  if (to.meta.requiresAuth) {
+    const authRaw = localStorage.getItem('cybertravel_auth') || sessionStorage.getItem('cybertravel_auth')
+    if (!authRaw) {
+      next('/')
+      return
+    }
+  }
   next()
 })
 

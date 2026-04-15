@@ -53,7 +53,7 @@ export const useAuthStore = defineStore('auth', () => {
     error.value = null
 
     try {
-      const auth = await tripApi.login(email, password)
+      const auth = await tripApi.login(email, password, remember)
       user.value = auth.user
       token.value = auth.token
       rememberMe.value = remember
@@ -67,12 +67,12 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  const register = async (email: string, password: string, name: string, remember: boolean = true) => {
+  const register = async (email: string, password: string, name: string = '', remember: boolean = true) => {
     isLoading.value = true
     error.value = null
 
     try {
-      const auth = await tripApi.register(email, password, name)
+      const auth = await tripApi.register(email, password, name, remember)
       user.value = auth.user
       token.value = auth.token
       rememberMe.value = remember

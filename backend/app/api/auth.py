@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.security import create_access_token, hash_password, verify_password
-from app.models.user import PasswordResetToken, User, UserPreference
+from app.core.security import create_access_token, hash_password, validate_password, verify_password
+from app.models.user import PasswordResetToken, User
 
 
 router = APIRouter()
@@ -22,12 +22,14 @@ bearer_scheme = HTTPBearer(auto_error=False)
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6, max_length=128)
-    name: str = Field(..., min_length=1, max_length=120)
+    name: str | None = Field(default=None, max_length=120)
+    remember_me: bool = True
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=128)
+    remember_me: bool = True
 
 
 class UserDTO(BaseModel):
@@ -41,6 +43,7 @@ class UserDTO(BaseModel):
 class AuthResponse(BaseModel):
     user: UserDTO
     token: str
+    token_expires_in_minutes: int
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -73,20 +76,31 @@ def register(request: RegisterRequest, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=409, detail="该邮箱已注册")
 
+    try:
+        password_hash = hash_password(request.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    display_name = request.name.strip() if request.name and request.name.strip() else request.email.split("@")[0]
+
     user = User(
         email=request.email,
-        password_hash=hash_password(request.password),
-        name=request.name.strip(),
+        password_hash=password_hash,
+        name=display_name,
     )
     db.add(user)
     db.flush()
 
-    db.add(UserPreference(user_id=user.id))
     db.commit()
     db.refresh(user)
 
-    token = create_access_token(user.id)
-    return AuthResponse(user=_to_user_dto(user), token=token)
+    token_expire_minutes = (
+        settings.ACCESS_TOKEN_EXPIRE_MINUTES_REMEMBER_ME
+        if request.remember_me
+        else settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+    token = create_access_token(user.id, expires_minutes=token_expire_minutes)
+    return AuthResponse(user=_to_user_dto(user), token=token, token_expires_in_minutes=token_expire_minutes)
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -100,8 +114,13 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    token = create_access_token(user.id)
-    return AuthResponse(user=_to_user_dto(user), token=token)
+    token_expire_minutes = (
+        settings.ACCESS_TOKEN_EXPIRE_MINUTES_REMEMBER_ME
+        if request.remember_me
+        else settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+    token = create_access_token(user.id, expires_minutes=token_expire_minutes)
+    return AuthResponse(user=_to_user_dto(user), token=token, token_expires_in_minutes=token_expire_minutes)
 
 
 def get_current_user(
@@ -157,6 +176,11 @@ def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(get_db
 
 @router.post("/reset-password")
 def reset_password(request: ResetPasswordRequest, db: Session = Depends(get_db)):
+    try:
+        validate_password(request.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     token_hash = hashlib.sha256(request.token.encode("utf-8")).hexdigest()
 
     reset_record = db.execute(

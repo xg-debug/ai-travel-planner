@@ -9,13 +9,14 @@ class TripState(TypedDict, total=False):
     budget: Optional[str]
     travelers: Optional[int]
     start_date: Optional[str]
-    
+    query_plan: Dict[str, Any]
+    attraction_candidates: List[Dict[str, Any]]
+    hotel_options: List[Dict[str, Any]]
     plan: List[Dict[str, Any]]
     poi_data: Dict[str, Any]
     weather_data: Dict[str, Any]
     recommendations: Optional[List[Dict[str, Any]]]
     estimated_budget: Optional[Dict[str, Any]]
-    
     final_output: str
 
 # Pydantic模型用于API请求/响应
@@ -34,6 +35,7 @@ class TripResponse(BaseModel):
     itinerary: Optional[List[Dict[str, Any]]] = None
     weather: Optional[Dict[str, Any]] = None
     recommendations: Optional[List[Dict[str, Any]]] = None
+    hotels: Optional[List[Dict[str, Any]]] = None
     estimated_budget: Optional[Dict[str, Any]] = None
 
 class PoiDetails(BaseModel):
@@ -49,6 +51,7 @@ class PoiDetails(BaseModel):
     opening_hours: str
     best_time: str
     tips: str
+    image_url: Optional[str] = None
 
 class WeatherInfo(BaseModel):
     city: str

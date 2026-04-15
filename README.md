@@ -148,6 +148,8 @@ LLM_MAX_TOKENS=
 #### 地图服务
 ```env
 AMAP_API_KEY=your_amap_api_key
+UNSPLASH_ACCESS_KEY=your_unsplash_access_key
+UNSPLASH_SECRET_KEY=your_unsplash_secret_key
 ```
 
 #### 其他配置

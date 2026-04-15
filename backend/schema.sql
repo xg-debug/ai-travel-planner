@@ -22,19 +22,6 @@ CREATE TABLE IF NOT EXISTS users (
   KEY idx_users_email (email)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS user_preferences (
-  user_id CHAR(36) NOT NULL,
-  theme VARCHAR(20) NOT NULL DEFAULT 'light',
-  language VARCHAR(10) NOT NULL DEFAULT 'zh-CN',
-  currency VARCHAR(10) NOT NULL DEFAULT 'CNY',
-  notifications_json JSON NOT NULL,
-  travel_style_json JSON NOT NULL,
-  PRIMARY KEY (user_id),
-  CONSTRAINT fk_user_preferences_user
-    FOREIGN KEY (user_id) REFERENCES users(id)
-    ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 CREATE TABLE IF NOT EXISTS trips (
   id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
@@ -95,20 +82,21 @@ CREATE TABLE IF NOT EXISTS trip_activities (
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS feedbacks (
+CREATE TABLE IF NOT EXISTS trip_plans (
   id CHAR(36) NOT NULL,
-  trip_id CHAR(36) NULL,
-  rating TINYINT NOT NULL,
-  category VARCHAR(64) NOT NULL,
-  comment TEXT NOT NULL,
-  user_email VARCHAR(255) NULL,
-  user_name VARCHAR(120) NULL,
+  user_id CHAR(36) NOT NULL,
+  destination VARCHAR(255) NOT NULL,
+  start_date VARCHAR(20) NOT NULL,
+  end_date VARCHAR(20) NOT NULL,
+  payload_json LONGTEXT NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  KEY idx_feedbacks_category (category),
-  KEY idx_feedbacks_created_at (created_at),
-  CONSTRAINT chk_feedback_rating CHECK (rating BETWEEN 1 AND 5)
+  KEY idx_trip_plans_user_id (user_id),
+  KEY idx_trip_plans_destination (destination),
+  CONSTRAINT fk_trip_plans_user
+    FOREIGN KEY (user_id) REFERENCES users(id)
+    ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
