@@ -1,17 +1,12 @@
 <template>
   <div class="min-h-screen bg-slate-50 text-gray-800">
-    <!-- 主要内容 -->
-    <div>
-      <!-- 导航栏 -->
-      <!-- <TravelNav /> -->
-      
-      <!-- 主路由视图 -->
+    <div v-if="isMapRoute">
+      <router-view />
+    </div>
+    <div v-else>
       <main class="container mx-auto px-4 py-8">
         <router-view />
       </main>
-
-      <!-- 页脚 -->
-      <!-- <TravelFooter /> -->
     </div>
 
     <!-- 全局通知 -->
@@ -20,9 +15,14 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import TravelNav from '@/components/TravelNav.vue'
 import TravelFooter from '@/components/TravelFooter.vue'
 import TravelNotifications from '@/components/TravelNotifications.vue'
+
+const route = useRoute()
+const isMapRoute = computed(() => route.path === '/map')
 </script>
 
 <style scoped>

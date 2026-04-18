@@ -14,16 +14,22 @@ from app.graph.state import TripState
 
 logger = logging.getLogger(__name__)
 
+NODE_REGISTRY = {
+    "query_agent": query_agent_node,
+    "scenic_agent": scenic_search_agent_node,
+    "hotel_agent": hotel_search_agent_node,
+    "planning_agent": planning_agent_node,
+    "poi_agent": poi_detail_agent_node,
+    "weather_tool": weather_tool_step,
+    "budget": budget_node,
+    "summary": summary_node,
+}
+
+
 def build_trip_graph():
     workflow = StateGraph(TripState)
-    workflow.add_node("query_agent", query_agent_node)
-    workflow.add_node("scenic_agent", scenic_search_agent_node)
-    workflow.add_node("hotel_agent", hotel_search_agent_node)
-    workflow.add_node("planning_agent", planning_agent_node)
-    workflow.add_node("poi_agent", poi_detail_agent_node)
-    workflow.add_node("weather_tool", weather_tool_step)
-    workflow.add_node("budget", budget_node)
-    workflow.add_node("summary", summary_node)
+    for name, node in NODE_REGISTRY.items():
+        workflow.add_node(name, node)
 
     workflow.set_entry_point("query_agent")
     workflow.add_edge("query_agent", "scenic_agent")
@@ -42,6 +48,8 @@ class TripPlanner:
     """旅行规划器。"""
 
     def __init__(self):
+        # 保留 nodes 兼容层，供 SSE 流式接口逐步执行各步骤。
+        self.nodes = dict(NODE_REGISTRY)
         self.graph = build_trip_graph()
 
     def plan_trip(self, state: Dict[str, Any]) -> Dict[str, Any]:

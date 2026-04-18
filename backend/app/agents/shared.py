@@ -4,7 +4,7 @@ import re
 from datetime import date, timedelta
 from typing import Any, Dict, List
 
-from app.services.amap_service import search_pois
+from app.services.amap_service import search_hotels, search_pois
 from app.services.unsplash_service import search_best_photo
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,39 @@ def dedupe(items: List[str]) -> List[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def normalize_search_query(query: str, city: str) -> List[str]:
+    text = str(query or "").strip()
+    if not text:
+        return []
+
+    normalized = text.replace("（", "(").replace("）", ")")
+    normalized = re.sub(r"[()]", " ", normalized)
+    normalized = re.sub(r"[·,，/、;；]", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    variants = [normalized]
+    without_city = normalized.replace(city, " ").strip()
+    if without_city:
+        variants.append(without_city)
+
+    trimmed = re.sub(
+        r"(本地人推荐|推荐|高分|高评分|黑珍珠|摄影|观景台|私家园林|精品|豪华|日落|生态|工作室|别墅式)",
+        " ",
+        without_city or normalized,
+    )
+    trimmed = re.sub(r"\s+", " ", trimmed).strip()
+    if trimmed:
+        variants.append(trimmed)
+
+    tokens = [token for token in trimmed.split() if token]
+    if len(tokens) >= 2:
+        variants.append(" ".join(tokens[:2]))
+    if tokens:
+        variants.append(tokens[0])
+
+    return dedupe([item for item in variants if item and item != city])
 
 
 def is_generic_location(location: str, city: str) -> bool:
@@ -183,16 +216,49 @@ def build_image_queries(city: str, activity: Dict[str, Any], poi: Dict[str, Any]
     poi_type = str(poi.get("type", "")).strip()
     activity_type = str(activity.get("type", "")).strip()
     title = str(activity.get("title", "")).strip()
+    simple_type = poi_type.split(";")[0].strip() if poi_type else ""
+    is_food = any(token in f"{poi_type} {activity_type} {title}" for token in ("餐饮", "早餐", "午餐", "晚餐", "美食"))
+    is_hotel = any(token in f"{poi_type} {poi_name}" for token in ("酒店", "宾馆", "民宿", "住宿"))
+    is_park = any(token in f"{poi_type} {poi_name} {title}" for token in ("公园", "湿地", "自然"))
+    is_night = any(token in f"{poi_type} {poi_name} {title}" for token in ("夜景", "商圈", "步行街", "购物"))
 
-    queries = [
-        f"{poi_name} {city}",
-        poi_name,
-    ]
-    if poi_type:
-        queries.append(f"{poi_name} {poi_type}")
-    if activity_type:
+    if is_food:
+        queries = [
+            f"{poi_name} {city}",
+            f"{city} local food",
+            f"{city} breakfast" if "早餐" in f"{activity_type} {title}" else f"{city} restaurant",
+            poi_name,
+        ]
+    elif is_hotel:
+        queries = [
+            f"{poi_name} {city}",
+            f"{city} hotel",
+            f"{city} boutique hotel",
+            poi_name,
+        ]
+    elif is_park:
+        queries = [
+            f"{poi_name} {city}",
+            f"{city} park",
+            poi_name,
+        ]
+    elif is_night:
+        queries = [
+            f"{poi_name} {city}",
+            f"{city} skyline",
+            f"{city} night view",
+        ]
+    else:
+        queries = [
+            f"{poi_name} {city}",
+            poi_name,
+        ]
+
+    if simple_type and len(simple_type) <= 12:
+        queries.append(f"{city} {simple_type}")
+    if activity_type and not is_food and not is_hotel:
         queries.append(f"{city} {activity_type}")
-    if title:
+    if title and len(title) <= 20:
         queries.append(f"{city} {title}")
 
     return dedupe([query for query in queries if query.strip()])
@@ -516,17 +582,19 @@ def collect_ranked_candidates(queries: List[str], city: str, hotel: bool = False
     ranked: List[tuple[float, Dict[str, Any]]] = []
     seen = set()
     for query in queries:
-        try:
-            pois = search_pois(query, city, 1, 8)
-        except Exception as exc:
-            logger.warning("POI 搜索失败 query=%s city=%s error=%s", query, city, exc)
-            continue
-        for poi in pois:
-            name = str(poi.get("name", "")).strip()
-            if not name or name in seen:
+        variants = normalize_search_query(query, city) or [query]
+        for variant in variants[:4]:
+            try:
+                pois = search_hotels(variant, city, 1, 8) if hotel else search_pois(variant, city, 1, 8)
+            except Exception as exc:
+                logger.warning("POI 搜索失败 query=%s city=%s error=%s", variant, city, exc)
                 continue
-            seen.add(name)
-            ranked.append((score_general_candidate(poi, city, query, hotel=hotel), poi))
+            for poi in pois:
+                name = str(poi.get("name", "")).strip()
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                ranked.append((score_general_candidate(poi, city, variant, hotel=hotel), poi))
 
     ranked.sort(key=lambda item: item[0], reverse=True)
     return [poi for _, poi in ranked[:limit]]

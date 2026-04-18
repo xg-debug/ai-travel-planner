@@ -131,7 +131,7 @@
                       <img
                         :src="getActivityImage(activity, index)"
                         :alt="activity.title"
-                        class="h-44 w-full object-cover"
+                        class="h-52 w-full object-cover object-center md:h-60"
                         loading="lazy"
                         decoding="async"
                         @error="handleImageError"
@@ -399,8 +399,19 @@ const getWeatherIcon = (condition: string) => {
 const fallbackImage = 'https://picsum.photos/seed/travel-fallback/1200/800'
 
 const getActivityImage = (activity: any, index: number) => {
-  if (activity?.image) return activity.image
-  const seed = encodeURIComponent(`${trip.value?.destination || 'trip'}-${activeDayIndex.value}-${index}`)
+  if (activity?.image) {
+    const reusedEarlier = (trip.value?.days || []).some((day: any, dayIndex: number) =>
+      (day.activities || []).some((item: any, itemIndex: number) => {
+        if (dayIndex > activeDayIndex.value) return false
+        if (dayIndex === activeDayIndex.value && itemIndex >= index) return false
+        return item?.image && item.image === activity.image
+      })
+    )
+    if (!reusedEarlier) return activity.image
+  }
+  const seed = encodeURIComponent(
+    `${trip.value?.destination || 'trip'}-${activeDayIndex.value}-${index}-${activity?.location || activity?.title || 'activity'}`
+  )
   return `https://picsum.photos/seed/${seed}/1200/800`
 }
 

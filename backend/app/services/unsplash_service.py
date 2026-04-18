@@ -28,6 +28,7 @@ class UnsplashService:
         self.access_key = access_key
         self.secret_key = secret_key
         self.base_url = "https://api.unsplash.com"
+        self.disabled_reason: Optional[str] = None
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -37,7 +38,14 @@ class UnsplashService:
         )
 
     def _normalize_query(self, query: str) -> str:
-        text = re.sub(r"\s+", " ", str(query or "").strip())
+        text = str(query or "").strip()
+        text = re.sub(r"[（(].*?[)）]", " ", text)
+        text = text.replace(";", " ")
+        text = re.sub(r"\b(店|分店|店铺|旗舰店)\b", " ", text)
+        text = re.sub(r"(餐饮服务|中餐厅|外国餐厅|快餐厅|住宿服务|宾馆酒店|风景名胜|公园广场)", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if len(text) > 48:
+            text = text[:48].strip()
         return text
 
     def _expand_queries(self, queries: List[str]) -> List[str]:
@@ -111,7 +119,7 @@ class UnsplashService:
     def search_photos(self, query: str, per_page: int = 10) -> List[Dict[str, Any]]:
         """按关键词搜索图片。"""
         normalized_query = self._normalize_query(query)
-        if not normalized_query or not self.access_key:
+        if not normalized_query or not self.access_key or self.disabled_reason:
             return []
 
         try:
@@ -125,12 +133,25 @@ class UnsplashService:
                 },
                 timeout=10,
             )
+            if response.status_code in {410, 422}:
+                logger.warning("Unsplash 查询被拒绝，已跳过 query=%s status=%s", normalized_query, response.status_code)
+                return []
+            if response.status_code == 403:
+                self.disabled_reason = "forbidden"
+                logger.warning("Unsplash 已返回 403，当前进程内后续图片搜索将自动跳过")
+                return []
             response.raise_for_status()
 
             data = response.json()
             results = data.get("results", [])
             photos = [self._extract_photo(result, normalized_query) for result in results]
             return [photo for photo in photos if photo.get("url")]
+        except requests.Timeout:
+            logger.warning("Unsplash 搜索超时 query=%s", normalized_query)
+            return []
+        except requests.exceptions.SSLError as exc:
+            logger.warning("Unsplash SSL 异常 query=%s error=%s", normalized_query, exc)
+            return []
         except Exception as exc:
             logger.warning("Unsplash 搜索失败 query=%s error=%s", normalized_query, exc)
             return []

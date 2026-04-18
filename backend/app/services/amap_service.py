@@ -1,6 +1,7 @@
 import requests
 import logging
 import re
+import math
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from app.core.config import settings
@@ -22,6 +23,117 @@ def _safe_int(value: Any, default: int = 0) -> int:
     except Exception:
         return default
 
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                parsed = _safe_float(item, None)  # type: ignore[arg-type]
+                if parsed is not None:
+                    return parsed
+            return default
+        if isinstance(value, dict):
+            for key in ("value", "rating", "score", "lat", "lng", "longitude", "latitude"):
+                if key in value:
+                    return _safe_float(value.get(key), default)
+            return default
+        text = str(value).strip()
+        if not text:
+            return default
+        matched = re.search(r"-?\d+(?:\.\d+)?", text)
+        if not matched:
+            return default
+        return float(matched.group())
+    except Exception:
+        return default
+
+
+def _safe_text(value: Any, default: str = "") -> str:
+    if value is None:
+        return default
+    if isinstance(value, list):
+        parts = [str(item).strip() for item in value if str(item).strip()]
+        return " ".join(parts) if parts else default
+    if isinstance(value, dict):
+        for key in ("value", "name", "text", "label"):
+            if key in value:
+                return _safe_text(value.get(key), default)
+        return default
+    text = str(value).strip()
+    return text or default
+
+
+def _safe_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _parse_location(value: Any) -> tuple[float, float]:
+    if isinstance(value, str):
+        parts = value.split(",")
+        if len(parts) >= 2:
+            lng = _safe_float(parts[0], 0.0)
+            lat = _safe_float(parts[1], 0.0)
+            return lng, lat
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        lng = _safe_float(value[0], 0.0)
+        lat = _safe_float(value[1], 0.0)
+        return lng, lat
+    if isinstance(value, dict):
+        lng = _safe_float(value.get("lng") or value.get("lon") or value.get("longitude"), 0.0)
+        lat = _safe_float(value.get("lat") or value.get("latitude"), 0.0)
+        return lng, lat
+    return 0.0, 0.0
+
+
+def _is_valid_route_coordinate(value: str) -> bool:
+    try:
+        lng_text, lat_text = str(value).split(",")[:2]
+        lng = float(lng_text)
+        lat = float(lat_text)
+        return 73 <= lng <= 136 and 3 <= lat <= 54
+    except Exception:
+        return False
+
+
+def _estimate_direct_route(origin: str, destination: str) -> Dict[str, Any]:
+    try:
+        origin_lng, origin_lat = [float(item) for item in origin.split(",")[:2]]
+        dest_lng, dest_lat = [float(item) for item in destination.split(",")[:2]]
+    except Exception as exc:
+        raise RuntimeError(f"无法估算直线路线: {exc}") from exc
+
+    def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        radius = 6371000
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        d_phi = math.radians(lat2 - lat1)
+        d_lambda = math.radians(lon2 - lon1)
+        a = (
+            math.sin(d_phi / 2) ** 2
+            + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+        )
+        return 2 * radius * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    distance = haversine(origin_lat, origin_lng, dest_lat, dest_lng)
+    duration = max(int(distance / 8), 300)
+    return {
+        "distance": int(distance),
+        "duration": duration,
+        "steps": [
+            {
+                "instruction": "使用直连降级路线",
+                "polyline": f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}",
+            }
+        ],
+        "toll": 0,
+        "traffic_lights": 0,
+        "fallback": True,
+    }
+
 class AMapService:
     """高德地图服务"""
     
@@ -29,7 +141,14 @@ class AMapService:
         self.api_key = settings.AMAP_API_KEY
         self.base_url = "https://restapi.amap.com/v3"
         
-    def search_pois(self, keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
+    def search_pois(
+        self,
+        keyword: str,
+        city: str,
+        page: int = 1,
+        size: int = 10,
+        poi_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         搜索POI（兴趣点）
         
@@ -48,13 +167,15 @@ class AMapService:
         try:
             params = {
                 "key": self.api_key,
-                "keywords": f"{keyword} {city}",
+                "keywords": keyword,
                 "city": city,
                 "output": "json",
                 "offset": size,
                 "page": page,
                 "extensions": "all"
             }
+            if poi_type:
+                params["types"] = poi_type
             
             response = requests.get(f"{self.base_url}/place/text", params=params, timeout=10)
             response.raise_for_status()
@@ -63,21 +184,23 @@ class AMapService:
             if data.get("status") == "1" and data.get("pois"):
                 pois = []
                 for poi in data["pois"][:size]:
+                    biz_ext = _safe_dict(poi.get("biz_ext"))
                     photos = poi.get("photos") or []
                     image_url = ""
                     if photos and isinstance(photos, list):
                         image_url = photos[0].get("url", "") or ""
+                    lng, lat = _parse_location(poi.get("location"))
                     pois.append({
                         "id": poi.get("id"),
-                        "name": poi.get("name"),
-                        "lat": float(poi.get("location", "0,0").split(",")[1]),
-                        "lng": float(poi.get("location", "0,0").split(",")[0]),
-                        "address": poi.get("address", ""),
-                        "type": poi.get("type", ""),
-                        "rating": float(poi.get("biz_ext", {}).get("rating", "0")) or 4.0,
-                        "price": poi.get("biz_ext", {}).get("cost", "免费"),
-                        "description": f"{poi.get('name')}位于{poi.get('address', city)}",
-                        "opening_hours": poi.get("biz_ext", {}).get("opentime", "09:00-17:00"),
+                        "name": _safe_text(poi.get("name")),
+                        "lat": lat,
+                        "lng": lng,
+                        "address": _safe_text(poi.get("address"), city),
+                        "type": _safe_text(poi.get("type")),
+                        "rating": _safe_float(biz_ext.get("rating"), 4.0) or 4.0,
+                        "price": _safe_text(biz_ext.get("cost"), "免费"),
+                        "description": f"{_safe_text(poi.get('name'))}位于{_safe_text(poi.get('address'), city)}",
+                        "opening_hours": _safe_text(biz_ext.get("opentime"), "09:00-17:00"),
                         "image_url": image_url,
                         "best_time": "上午",
                         "tips": "建议提前查询最新信息"
@@ -90,6 +213,26 @@ class AMapService:
         except Exception as e:
             logger.error(f"Error searching POIs: {e}")
             raise
+
+    def search_hotels(self, keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
+        """
+        酒店搜索专用封装。
+        仍基于高德 POI 搜索，但附加酒店类型过滤，适合当前免费方案。
+        """
+        hotel_queries = [keyword, f"{city}酒店", f"{city}宾馆"]
+        results: List[Dict[str, Any]] = []
+        seen = set()
+        for hotel_query in hotel_queries:
+            pois = self.search_pois(hotel_query, city, page, size, poi_type="住宿服务")
+            for poi in pois:
+                name = _safe_text(poi.get("name"))
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                results.append(poi)
+                if len(results) >= size:
+                    return results
+        return results
     
     def get_weather_forecast(self, city: str, days: int = 3) -> Dict[str, Any]:
         """
@@ -158,6 +301,31 @@ class AMapService:
             raise RuntimeError("AMAP_API_KEY 未配置，无法计算路线")
         
         try:
+            if _is_valid_route_coordinate(origin) and _is_valid_route_coordinate(destination):
+                params = {
+                    "key": self.api_key,
+                    "origin": origin,
+                    "destination": destination,
+                    "strategy": self._get_route_strategy(mode)
+                }
+
+                response = requests.get(f"{self.base_url}/direction/{mode}", params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+
+                if data.get("status") == "1" and data.get("route", {}).get("paths"):
+                    route = data["route"]["paths"][0]
+                    return {
+                        "distance": route.get("distance", 0),
+                        "duration": route.get("duration", 0),
+                        "steps": route.get("steps", []),
+                        "toll": route.get("toll", 0),
+                        "traffic_lights": route.get("traffic_lights", 0)
+                    }
+
+                logger.warning("AMap route not found, fallback to direct line: %s -> %s", origin, destination)
+                return _estimate_direct_route(origin, destination)
+
             params = {
                 "key": self.api_key,
                 "origin": origin,
@@ -183,6 +351,8 @@ class AMapService:
                 
         except Exception as e:
             logger.error(f"Error calculating route: {e}")
+            if _is_valid_route_coordinate(origin) and _is_valid_route_coordinate(destination):
+                return _estimate_direct_route(origin, destination)
             raise
     
     def _parse_weather_data(self, weather_data: Dict[str, Any], city: str, days: int) -> Dict[str, Any]:
@@ -254,6 +424,9 @@ amap_service = AMapService()
 # 导出函数
 def search_pois(keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
     return amap_service.search_pois(keyword, city, page, size)
+
+def search_hotels(keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
+    return amap_service.search_hotels(keyword, city, page, size)
 
 def get_weather_forecast(city: str, days: int = 3) -> Dict[str, Any]:
     return amap_service.get_weather_forecast(city, days)
