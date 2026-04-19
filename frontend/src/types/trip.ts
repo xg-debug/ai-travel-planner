@@ -23,6 +23,8 @@ export interface Activity {
   type: 'food' | 'culture' | 'outdoor' | 'shopping' | 'entertainment' | 'transport' | 'other'
   duration: number // in minutes
   cost: number
+  ticketPrice?: number
+  ticketLabel?: string
   notes?: string
   image?: string
   coordinates?: {
@@ -31,14 +33,24 @@ export interface Activity {
   }
 }
 
+export interface HotelRecommendation {
+  name: string
+  address?: string
+  priceEstimate?: number | string
+  reason?: string
+  rating?: number
+}
+
 export interface TripDay {
   date: string
   activities: Activity[]
+  hotel?: HotelRecommendation
   notes?: string
   totalCost?: number
 }
 
 export interface WeatherForecast {
+  city?: string
   date: string
   high: number
   low: number
@@ -61,6 +73,8 @@ export interface POI {
   rating: number
   description: string
   priceRange: 'free' | '$' | '$$' | '$$$' | '$$$$'
+  priceText?: string
+  address?: string
   openingHours?: string
   website?: string
   phone?: string

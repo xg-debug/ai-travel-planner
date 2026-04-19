@@ -4,40 +4,15 @@ import re
 from datetime import date, timedelta
 from typing import Any, Dict, List
 
+from app.agents.city_knowledge import (
+    contains_any,
+    get_generic_location_keywords,
+    score_food_locality,
+)
 from app.services.amap_service import search_hotels, search_pois
 from app.services.unsplash_service import search_best_photo
 
 logger = logging.getLogger(__name__)
-
-GENERIC_LOCATION_PATTERNS = (
-    "早餐店",
-    "餐厅聚集区",
-    "热门餐厅",
-    "夜景商圈",
-    "城市公园",
-    "地标景区",
-    "历史街区",
-    "博物馆",
-    "推荐地点",
-)
-
-POI_STORY_HINTS = {
-    "西湖": "西湖是杭州最具代表性的城市名片，适合沿湖散步、乘船看景，也能串联断桥、白堤和孤山一线的人文景观。",
-    "灵隐寺": "灵隐寺是杭州最重要的佛教古刹之一，飞来峰造像与古寺院落一起构成了很强的历史厚度与山林禅意。",
-    "河坊街": "河坊街保留了杭州老城的市井气质，适合边走边逛小吃、手作与老字号店铺，感受南宋御街一带的烟火气。",
-    "南宋御街": "南宋御街是老杭州城市肌理的代表片区，石板路、骑楼和老字号店铺很适合慢慢逛，感受历史街区氛围。",
-    "西溪湿地": "西溪湿地以水网、芦苇与湿地生态著称，适合坐船、慢行和拍自然风景，整体节奏比市区更松弛。",
-    "京杭大运河": "运河一线串起杭州近代商贸与漕运记忆，夜间灯光映在河面上很有层次，适合散步看夜景。",
-    "湖滨步行街": "湖滨步行街兼顾西湖夜景、商业与餐饮，晚上灯光氛围好，适合作为收尾散步和吃晚饭的区域。",
-    "太子湾公园": "太子湾公园以大草坪、曲水和季节花景见长，春季尤其适合拍照和散步，是杭州很受欢迎的城市公园。",
-    "浙江省博物馆": "浙江省博物馆适合系统了解杭州与浙江的人文脉络，馆藏内容覆盖书画、陶瓷和地方历史。",
-    "中国丝绸博物馆": "中国丝绸博物馆能把杭州与丝绸文化的联系讲得很完整，展陈兼具审美和历史信息。",
-    "楼外楼": "楼外楼是杭州知名老字号，适合体验杭帮菜的经典做法，西湖醋鱼、东坡肉等传统菜式辨识度很高。",
-    "新丰小吃": "新丰小吃是杭州本地人熟悉的早餐选择，包子、馄饨和豆浆出餐快，适合作为行程开始前的轻早餐。",
-    "游埠豆浆": "游埠豆浆以豆浆、油条和烧饼等中式早餐组合受欢迎，适合快速感受杭州清晨的本地饮食节奏。",
-    "菊英面馆": "菊英面馆是杭州口碑面馆之一，适合尝试片儿川等本地面食，风格朴实但很有城市日常感。",
-    "绿茶餐厅": "绿茶餐厅以江南风格家常菜见长，环境轻松，适合作为中午或傍晚的稳定用餐选择。",
-}
 
 
 def dedupe(items: List[str]) -> List[str]:
@@ -89,11 +64,12 @@ def is_generic_location(location: str, city: str) -> bool:
     text = str(location or "").strip()
     if not text:
         return True
-    if any(keyword in text for keyword in GENERIC_LOCATION_PATTERNS):
+    generic_keywords = get_generic_location_keywords()
+    if contains_any(text, generic_keywords):
         return True
     if re.search(r"\d+-\d+$", text):
         return True
-    if text.startswith(city) and any(keyword in text for keyword in GENERIC_LOCATION_PATTERNS):
+    if text.startswith(city) and contains_any(text, generic_keywords):
         return True
     return False
 
@@ -185,10 +161,6 @@ def pick_best_poi(
 def build_poi_story(city: str, activity: Dict[str, Any], poi: Dict[str, Any]) -> str:
     name = str(poi.get("name", "")).strip()
     address = str(poi.get("address", city)).strip()
-    for pattern, story in POI_STORY_HINTS.items():
-        if pattern in name:
-            return f"{name}值得安排这一站，{story} 建议结合周边步行慢逛，更能感受到现场氛围。"
-
     hint_text = " ".join(
         [
             str(activity.get("title", "")),
@@ -349,6 +321,8 @@ def build_fallback_itinerary(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     start_date = state.get("start_date")
     hotel_options = state.get("hotel_options", []) or []
     hotel_name = str(hotel_options[0].get("name", "")).strip() if hotel_options else ""
+    hotel_price = hotel_options[0].get("price") if hotel_options else ""
+    hotel_address = str(hotel_options[0].get("address", "")).strip() if hotel_options else ""
 
     try:
         base_date = date.fromisoformat(start_date) if start_date else date.today()
@@ -373,7 +347,7 @@ def build_fallback_itinerary(state: Dict[str, Any]) -> List[Dict[str, Any]]:
         ["步行街", "商场", "购物", "夜景", "餐饮"],
     ]
     activity_blueprints = [
-        ("08:30-10:00", "酒店周边早餐与出发", "美食餐饮", "本地早餐店", 60, 35, "避开通勤高峰，优先地铁出行。"),
+        ("08:30-10:00", "本地特色早餐开启行程", "美食餐饮", "本地早餐店", 60, 35, "优先选择本地人常去的早餐店，早点到店更顺畅。"),
         ("10:00-12:00", "核心景点参观", "观光游览", "城市地标景区", 120, 90, "提前预约门票，减少排队时间。"),
         ("12:30-13:30", "特色午餐", "美食餐饮", "热门餐厅聚集区", 60, 110, "可提前线上取号。"),
         ("14:00-16:00", "博物馆/文化街区", "文化体验", "博物馆与历史街区", 120, 60, "馆内注意闭馆时间。"),
@@ -408,6 +382,7 @@ def build_fallback_itinerary(state: Dict[str, Any]) -> List[Dict[str, Any]]:
                     "location": resolved_location,
                     "duration": duration,
                     "cost_estimate": cost,
+                    "ticket_price": cost if any(keyword in act_type for keyword in ("观光", "文化", "户外")) else 0,
                     "tips": tips,
                     "transportation": transport,
                 }
@@ -419,6 +394,12 @@ def build_fallback_itinerary(state: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "date": current_date,
                 "theme": f"{city}·{theme}",
                 "summary": f"第{day_no}天聚焦「{theme}」，活动更均衡，避免跨天重复。",
+                "hotel_recommendation": {
+                    "name": hotel_name or f"{city}精选酒店",
+                    "price_estimate": hotel_price or "待查询",
+                    "address": hotel_address or f"{city}市区",
+                    "reason": "位置更适合作为本次路线的住宿落点，方便第二天继续出发。",
+                },
                 "activities": activities,
             }
         )
@@ -444,6 +425,7 @@ def normalize_itinerary(itinerary: List[Dict[str, Any]], state: Dict[str, Any]) 
         day.setdefault("date", fallback_days[idx].get("date"))
         day.setdefault("theme", fallback_days[idx].get("theme"))
         day.setdefault("summary", fallback_days[idx].get("summary"))
+        day.setdefault("hotel_recommendation", fallback_days[idx].get("hotel_recommendation"))
         activities = day.get("activities", [])
         if not isinstance(activities, list):
             activities = []
@@ -463,6 +445,10 @@ def normalize_itinerary(itinerary: List[Dict[str, Any]], state: Dict[str, Any]) 
             used_locations.add(unique_loc)
             act.setdefault("duration", 90)
             act.setdefault("cost_estimate", 80)
+            act.setdefault(
+                "ticket_price",
+                act.get("cost_estimate", 80) if any(keyword in str(act.get("type", "")) for keyword in ("观光", "文化", "户外")) else 0,
+            )
             act.setdefault("tips", "建议提前查看开放时间。")
             act.setdefault("transportation", "地铁/步行")
 
@@ -528,11 +514,11 @@ def build_query_agent_fallback(state: Dict[str, Any]) -> Dict[str, Any]:
     preferences = state.get("preferences", []) or []
     budget = state.get("budget", "中等")
     preference_queries = {
-        "culture": [f"{city}历史文化景点", f"{city}博物馆", f"{city}历史街区"],
-        "food": [f"{city}本地早餐", f"{city}杭帮菜", f"{city}高评分餐厅"],
-        "nature": [f"{city}城市公园", f"{city}湿地公园", f"{city}自然风景"],
-        "shopping": [f"{city}步行街", f"{city}夜景商圈", f"{city}商业街"],
-        "photography": [f"{city}夜景", f"{city}观景点", f"{city}打卡景点"],
+        "culture": [f"{city}城市地标", f"{city}博物馆", f"{city}历史街区"],
+        "food": [f"{city}本地特色早餐", f"{city}老字号早餐", f"{city}高评分特色餐厅"],
+        "nature": [f"{city}自然地标", f"{city}湿地景区", f"{city}山海风景"],
+        "shopping": [f"{city}人气步行街", f"{city}夜景地标", f"{city}商业街区"],
+        "photography": [f"{city}城市地标", f"{city}夜景地标", f"{city}打卡景点"],
     }
 
     attraction_queries: List[str] = []
@@ -540,7 +526,7 @@ def build_query_agent_fallback(state: Dict[str, Any]) -> Dict[str, Any]:
         attraction_queries.extend(preference_queries.get(pref, []))
 
     if not attraction_queries:
-        attraction_queries = [f"{city}热门景点", f"{city}历史文化景点", f"{city}高评分餐厅", f"{city}城市公园"]
+        attraction_queries = [f"{city}城市地标", f"{city}历史文化景点", f"{city}博物馆", f"{city}本地特色早餐", f"{city}高评分特色餐厅", f"{city}夜景地标"]
 
     return {
         "travel_style": "城市深度体验",
@@ -560,6 +546,7 @@ def build_query_agent_fallback(state: Dict[str, Any]) -> Dict[str, Any]:
 def score_general_candidate(poi: Dict[str, Any], city: str, query: str, hotel: bool = False) -> float:
     name = str(poi.get("name", ""))
     type_text = str(poi.get("type", ""))
+    address = str(poi.get("address", ""))
     score = float(poi.get("rating", 0) or 0) * 2
     if poi.get("image_url"):
         score += 1.5
@@ -573,8 +560,17 @@ def score_general_candidate(poi: Dict[str, Any], city: str, query: str, hotel: b
     else:
         if "酒店" in name or "酒店" in type_text or "宾馆" in type_text:
             score -= 4
-        if any(text in type_text for text in ("风景", "景点", "公园", "博物馆", "餐饮", "购物")):
+        if any(text in type_text for text in ("风景", "景点", "博物馆", "餐饮", "购物", "古镇", "历史", "文化")):
             score += 1.2
+        if "公园" in type_text and not any(text in query for text in ("公园", "湿地", "自然", "户外")):
+            score -= 1.8
+        if any(text in f"{name} {type_text}" for text in ("博物馆", "历史", "古镇", "老街", "景区", "风景名胜", "步行街", "城隍庙", "外滩")):
+            score += 1.8
+        if any(text in f"{name} {type_text}" for text in ("早餐", "面馆", "小吃", "老字号")) and any(text in query for text in ("早餐", "小吃", "餐厅", "美食")):
+            score += 1.4
+        if any(text in query for text in ("早餐", "小吃", "餐厅", "美食", "特色")):
+            searchable = f"{name} {type_text} {address}"
+            score += score_food_locality(searchable, city, query)
     return score
 
 

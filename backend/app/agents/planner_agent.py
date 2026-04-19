@@ -38,9 +38,13 @@ def planning_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     要求：
     1. 每天 5-6 个活动，时间从早到晚。
-    2. 尽量使用上面给出的真实地点名称，不要生成“早餐店1-1”这种占位词。
+    2. 使用真实地点名称，不要生成“早餐店1-1”这种占位词。
     3. 不同天主题要有差异，减少来回折返。
     4. 每天必须有景点、餐饮、休闲。
+    5. 每天都要给出一个推荐酒店，并尽量从可优先考虑的酒店里选择。
+    6. 景点/博物馆/乐园/公园等游览类活动要尽量给出明确门票信息；免费项目请写 0。
+    7. 早餐请优先安排本地特色早餐、老字号或城市代表性小吃，不要写“酒店周边早餐”这类泛化表达。
+    8. 景点请优先选择这座城市更有代表性的特色地标、人文历史、博物馆、经典街区和城市名片，不要整天都安排成公园。
 
     只返回 JSON 数组，格式：
     [
@@ -49,6 +53,12 @@ def planning_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "date": "YYYY-MM-DD",
         "theme": "当日主题",
         "summary": "一句话概览",
+        "hotel_recommendation": {{
+          "name": "酒店名称",
+          "price_estimate": 480,
+          "address": "酒店地址",
+          "reason": "为什么适合这一天"
+        }},
         "activities": [
           {{
             "time": "09:00-11:00",
@@ -58,6 +68,7 @@ def planning_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "location": "真实地点名称",
             "duration": 120,
             "cost_estimate": 80,
+            "ticket_price": 60,
             "tips": "实用建议",
             "transportation": "交通方式"
           }}

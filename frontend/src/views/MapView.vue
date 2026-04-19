@@ -53,6 +53,24 @@
         <div>缩放: {{ zoomLevel.toFixed(1) }}</div>
       </div>
     </div>
+
+    <div v-if="routeDays.length" class="absolute bottom-4 right-4 z-20 max-w-sm">
+      <div class="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm">
+        <div class="mb-2 font-semibold text-slate-900">路线图例</div>
+        <div class="space-y-2">
+          <div v-for="day in routeDays" :key="`legend-${day.dayIndex}`" class="flex items-center gap-3">
+            <span class="h-3 w-3 rounded-full" :style="{ backgroundColor: day.color }"></span>
+            <span>第 {{ day.dayIndex + 1 }} 天</span>
+            <span class="text-xs text-slate-500">{{ day.points[0]?.name }} → {{ day.points[day.points.length - 1]?.name }}</span>
+          </div>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
+          <span class="rounded-full bg-emerald-50 px-2 py-1 text-emerald-700">起点</span>
+          <span class="rounded-full bg-rose-50 px-2 py-1 text-rose-700">终点</span>
+          <span class="rounded-full bg-slate-100 px-2 py-1 text-slate-600">数字表示当天顺序</span>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -76,9 +94,10 @@ const currentBaseLayer = ref('standard')
 const markers = ref([])
 const polylines = ref([])
 const routeRequestId = ref(0)
-const routeStats = ref({ distance: 0, duration: 0, segments: 0 })
+const routeStats = ref({ distance: 0, duration: 0, segments: 0, days: 0 })
 const standardLayers = ref([])
 const satelliteLayers = ref([])
+const DAY_COLORS = ['#2563eb', '#f97316', '#10b981', '#8b5cf6', '#ec4899', '#14b8a6']
 
 const validPosition = (value) => {
   if (!value) return false
@@ -87,28 +106,49 @@ const validPosition = (value) => {
   return Number.isFinite(lat) && Number.isFinite(lng) && lat >= 3 && lat <= 54 && lng >= 73 && lng <= 136
 }
 
-const routePoints = computed(() => {
+const routeDays = computed(() => {
   const trip = tripStore.currentTrip
   if (!trip?.days?.length) return []
 
-  return trip.days.flatMap((day, dayIndex) =>
-    (day.activities || [])
-      .filter((activity) => validPosition(activity.coordinates))
-      .map((activity, activityIndex) => ({
-        id: activity.id || `activity_${dayIndex + 1}_${activityIndex + 1}`,
-        name: activity.location || activity.title || `活动 ${activityIndex + 1}`,
-        type: activity.type || 'other',
-        position: {
-          lat: Number(activity.coordinates.lat),
-          lng: Number(activity.coordinates.lng),
-        },
-      }))
-  )
+  return trip.days
+    .map((day, dayIndex) => {
+      const points = (day.activities || [])
+        .filter((activity) => validPosition(activity.coordinates))
+        .map((activity, activityIndex, arr) => ({
+          id: activity.id || `activity_${dayIndex + 1}_${activityIndex + 1}`,
+          name: activity.location || activity.title || `活动 ${activityIndex + 1}`,
+          title: activity.title || `活动 ${activityIndex + 1}`,
+          type: activity.type || 'other',
+          dayIndex,
+          activityIndex,
+          order: activityIndex + 1,
+          isStart: activityIndex === 0,
+          isEnd: activityIndex === arr.length - 1,
+          position: {
+            lat: Number(activity.coordinates.lat),
+            lng: Number(activity.coordinates.lng),
+          },
+        }))
+
+      if (!points.length) return null
+
+      return {
+        dayIndex,
+        date: day.date,
+        color: DAY_COLORS[dayIndex % DAY_COLORS.length],
+        points,
+      }
+    })
+    .filter(Boolean)
+})
+
+const routePoints = computed(() => {
+  return routeDays.value.flatMap((day) => day.points)
 })
 
 const routeSummary = computed(() => {
   if (!routeStats.value.segments) return ''
-  return `LLM 路线 ${routeStats.value.segments} 段 · 约 ${(routeStats.value.distance / 1000).toFixed(1)} km · ${Math.round(routeStats.value.duration / 60)} 分钟`
+  return `共 ${routeStats.value.days} 天 · ${routeStats.value.segments} 段 · 约 ${(routeStats.value.distance / 1000).toFixed(1)} km · ${Math.round(routeStats.value.duration / 60)} 分钟`
 })
 
 const injectAMapScript = () =>
@@ -157,7 +197,7 @@ const clearMarkers = () => {
 const clearPolylines = () => {
   polylines.value.forEach((line) => line.setMap(null))
   polylines.value = []
-  routeStats.value = { distance: 0, duration: 0, segments: 0 }
+  routeStats.value = { distance: 0, duration: 0, segments: 0, days: 0 }
 }
 
 const updateViewportState = () => {
@@ -167,26 +207,19 @@ const updateViewportState = () => {
   zoomLevel.value = Number(mapInstance.value.getZoom())
 }
 
-const createMarkerIcon = (type) => {
-  const colors = {
-    food: '#f59e0b',
-    culture: '#3b82f6',
-    outdoor: '#10b981',
-    shopping: '#8b5cf6',
-    entertainment: '#ec4899',
-    transport: '#64748b',
-    other: '#2563eb',
-  }
-  const color = colors[type] || colors.other
-  return new window.AMap.Icon({
-    image: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
-      <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26">
-        <circle cx="13" cy="13" r="11" fill="${color}" stroke="white" stroke-width="3" />
-      </svg>
-    `)}`,
-    size: new window.AMap.Size(26, 26),
-    imageSize: new window.AMap.Size(26, 26),
-  })
+const createMarkerContent = (point, dayColor) => {
+  const badgeColor = point.isStart ? '#059669' : point.isEnd ? '#e11d48' : dayColor
+  const label = point.isStart ? `D${point.dayIndex + 1}起` : point.isEnd ? `D${point.dayIndex + 1}终` : String(point.order)
+  return `
+    <div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%);">
+      <div style="min-width:32px;height:32px;padding:0 8px;border-radius:999px;background:${badgeColor};color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(15,23,42,.18);border:2px solid #fff;">
+        ${label}
+      </div>
+      <div style="margin-top:6px;padding:4px 8px;border-radius:999px;background:rgba(255,255,255,.96);color:#0f172a;font-size:12px;font-weight:600;white-space:nowrap;box-shadow:0 4px 12px rgba(15,23,42,.10);max-width:180px;overflow:hidden;text-overflow:ellipsis;">
+        ${point.title}
+      </div>
+    </div>
+  `
 }
 
 const buildBaseLayers = () => {
@@ -225,15 +258,17 @@ const renderMarkers = () => {
   if (!mapInstance.value) return
   clearMarkers()
 
-  routePoints.value.forEach((point) => {
+  routeDays.value.forEach((day) => {
+    day.points.forEach((point) => {
     const marker = new window.AMap.Marker({
       position: [point.position.lng, point.position.lat],
       title: point.name,
-      icon: createMarkerIcon(point.type),
+      content: createMarkerContent(point, day.color),
       map: showMarkers.value ? mapInstance.value : null,
-      offset: new window.AMap.Pixel(-13, -13),
+      anchor: 'bottom-center',
     })
     markers.value.push(marker)
+  })
   })
 }
 
@@ -255,18 +290,26 @@ const drawRoute = async () => {
   if (!mapInstance.value) return
 
   clearPolylines()
-  const points = routePoints.value.map((item) => [item.position.lng, item.position.lat])
-  if (points.length < 2) return
+  if (!routeDays.value.length) return
 
   const requestId = Date.now()
   routeRequestId.value = requestId
   isDrawingRoute.value = true
 
   try {
-    const segments = await Promise.all(
-      points.slice(0, -1).map((point, index) =>
-        tripApi.calculateRoute(`${point[0]},${point[1]}`, `${points[index + 1][0]},${points[index + 1][1]}`, 'driving').catch(() => null)
-      )
+    const daySegments = await Promise.all(
+      routeDays.value.map(async (day) => {
+        const points = day.points.map((item) => [item.position.lng, item.position.lat])
+        if (points.length < 2) {
+          return { day, segments: [] }
+        }
+        const segments = await Promise.all(
+          points.slice(0, -1).map((point, index) =>
+            tripApi.calculateRoute(`${point[0]},${point[1]}`, `${points[index + 1][0]},${points[index + 1][1]}`, 'driving').catch(() => null)
+          )
+        )
+        return { day, points, segments }
+      })
     )
 
     if (routeRequestId.value !== requestId || !mapInstance.value) return
@@ -275,35 +318,39 @@ const drawRoute = async () => {
     let totalDuration = 0
     const overlays = [...markers.value]
 
-    segments.forEach((segment, index) => {
-      let path = []
-      if (segment?.steps?.length) {
-        path = buildPathFromSteps(segment.steps)
-        totalDistance += Number(segment.distance || 0)
-        totalDuration += Number(segment.duration || 0)
-      }
-      if (path.length < 2) {
-        path = [points[index], points[index + 1]]
-      }
+    daySegments.forEach(({ day, points = [], segments = [] }) => {
+      segments.forEach((segment, index) => {
+        let path = []
+        if (segment?.steps?.length) {
+          path = buildPathFromSteps(segment.steps)
+          totalDistance += Number(segment.distance || 0)
+          totalDuration += Number(segment.duration || 0)
+        }
+        if (path.length < 2) {
+          path = [points[index], points[index + 1]]
+        }
 
-      const polyline = new window.AMap.Polyline({
-        path,
-        strokeColor: '#2563eb',
-        strokeWeight: 5,
-        strokeOpacity: 0.95,
-        lineJoin: 'round',
-        lineCap: 'round',
-        showDir: true,
-        map: mapInstance.value,
+        const polyline = new window.AMap.Polyline({
+          path,
+          strokeColor: day.color,
+          strokeWeight: 6,
+          strokeOpacity: 0.9,
+          lineJoin: 'round',
+          lineCap: 'round',
+          showDir: true,
+          zIndex: 20 + day.dayIndex,
+          map: mapInstance.value,
+        })
+        polylines.value.push(polyline)
+        overlays.push(polyline)
       })
-      polylines.value.push(polyline)
-      overlays.push(polyline)
     })
 
     routeStats.value = {
       distance: totalDistance,
       duration: totalDuration,
       segments: polylines.value.length,
+      days: routeDays.value.length,
     }
 
     if (overlays.length) {

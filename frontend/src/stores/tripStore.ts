@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { tripApi } from '@/services/api'
-import type { Trip, TripRequest, TripDay, Activity, WeatherForecast, POI, BudgetCategory, TripResponse } from '@/types/trip'
+import type { Trip, TripRequest, TripDay, Activity, WeatherForecast, POI, BudgetCategory, TripResponse, HotelRecommendation } from '@/types/trip'
 import { useAuthStore } from '@/stores/authStore'
 
 type StreamStepStatus = 'pending' | 'active' | 'done' | 'error'
@@ -73,7 +73,7 @@ export const useTripStore = defineStore('trip', () => {
           streamingStatus.value = evt.data?.message || '正在生成中...'
         }
       })
-      const parsedDays = convertItineraryToDays(response.itinerary || [], tripRequest, response.pois || {})
+      const parsedDays = convertItineraryToDays(response.itinerary || [], tripRequest, response.pois || {}, response.hotels || [])
 
       if (!parsedDays.length) {
         throw new Error(response.plan || 'AI 未生成可用行程，请稍后重试')
@@ -84,6 +84,7 @@ export const useTripStore = defineStore('trip', () => {
         try {
           const weatherData = await tripApi.getWeather(tripRequest.destination, tripRequest.days)
           weather = weatherData.map((item) => ({
+            city: tripRequest.destination,
             date: item.date,
             high: Number(item.temperature) + 3,
             low: Number(item.temperature) - 3,
@@ -290,7 +291,7 @@ export const useTripStore = defineStore('trip', () => {
     )
   }
 
-  const convertItineraryToDays = (itinerary: any[], request: TripRequest, poiMap: Record<string, any>): TripDay[] => {
+  const convertItineraryToDays = (itinerary: any[], request: TripRequest, poiMap: Record<string, any>, hotels: any[] = []): TripDay[] => {
     const days: TripDay[] = []
     const startDate = new Date(request.startDate)
     
@@ -306,7 +307,8 @@ export const useTripStore = defineStore('trip', () => {
         )
         days.push({
           date: dayData.date || date.toISOString().split('T')[0],
-          activities
+          activities,
+          hotel: normalizeDayHotel(dayData.hotel_recommendation || dayData.hotel, hotels)
         })
       }
     } else {
@@ -320,6 +322,7 @@ export const useTripStore = defineStore('trip', () => {
     if (!weather || !weather.forecast) return []
     
     return weather.forecast.map((forecast: any) => ({
+      city: weather.city,
       date: forecast.date,
       high: forecast.temperature?.max || 25,
       low: forecast.temperature?.min || 15,
@@ -367,8 +370,25 @@ export const useTripStore = defineStore('trip', () => {
       rating: Number(hotel.rating) || 4.5,
       description: hotel.description || `${hotel.name || '该酒店'}适合作为本次路线的住宿落点。`,
       priceRange: mapPriceRange(hotel.price),
+      priceText: normalizePriceText(hotel.price),
+      address: hotel.address || '',
       openingHours: hotel.opening_hours || '全天'
     }))
+  }
+
+  const normalizeDayHotel = (hotel: any, hotelOptions: any[] = []): HotelRecommendation | undefined => {
+    const source = hotel || hotelOptions[0]
+    if (!source) return undefined
+    const name = String(source.name || '').trim()
+    if (!name) return undefined
+    const priceEstimate = source.price_estimate ?? source.price ?? source.cost ?? source.estimated_cost
+    return {
+      name,
+      address: source.address || '',
+      priceEstimate: typeof priceEstimate === 'number' ? priceEstimate : normalizePriceText(priceEstimate),
+      reason: source.reason || source.description || `${name}适合作为这次行程的住宿落点。`,
+      rating: Number(source.rating) || undefined
+    }
   }
 
   const findPoiByLocation = (location: string, poiMap: Record<string, any>) => {
@@ -416,6 +436,8 @@ export const useTripStore = defineStore('trip', () => {
     const cost = Number(activity.cost ?? activity.cost_estimate ?? 0) || 0
     const normalizedType = mapActivityType(activity.type || fallbackTheme)
     const poi = findPoiByLocation(activity.location || '', poiMap)
+    const ticketPrice = normalizeTicketPrice(activity, poi, normalizedType)
+    const ticketLabel = buildTicketLabel(activity, poi, ticketPrice)
     const lat = Number(poi?.lat)
     const lng = Number(poi?.lng)
     const description = !isGenericActivityDescription(activity.description)
@@ -431,6 +453,8 @@ export const useTripStore = defineStore('trip', () => {
       type: normalizedType,
       duration: Number(activity.duration) || 90,
       cost,
+      ticketPrice,
+      ticketLabel,
       notes: activity.tips || poi?.tips || activity.transportation,
       image: image || buildScenicImageUrl(city, activity.location || `day-${dayIndex + 1}`, `${dayIndex + 1}-${activityIndex + 1}`),
       coordinates: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : undefined
@@ -468,7 +492,41 @@ export const useTripStore = defineStore('trip', () => {
     if (priceRange.includes('免费')) return 'free'
     if (priceRange.includes('豪华')) return '$$$$'
     if (priceRange.includes('经济')) return '$'
+    if (/\d{3,}/.test(priceRange)) return '$$$'
     return '$$'
+  }
+
+  const normalizePriceText = (value: unknown): string => {
+    const text = String(value ?? '').trim()
+    if (!text) return '待查询'
+    if (text.includes('免费')) return '免费'
+    if (text.startsWith('¥') || text.startsWith('￥')) return text
+    if (/^\d+(\.\d+)?$/.test(text)) return `¥${text}/晚`
+    return text
+  }
+
+  const parseNumericPrice = (value: unknown): number | undefined => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    const match = String(value ?? '').match(/\d+(?:\.\d+)?/)
+    if (!match) return undefined
+    return Number(match[0])
+  }
+
+  const normalizeTicketPrice = (activity: any, poi: any, type: Activity['type']): number | undefined => {
+    const explicit = parseNumericPrice(activity.ticket_price ?? activity.ticketPrice)
+    if (explicit !== undefined) return explicit
+    const poiPrice = parseNumericPrice(poi?.price)
+    if (poiPrice !== undefined && ['culture', 'outdoor', 'entertainment', 'other'].includes(type)) return poiPrice
+    if (type === 'food' || type === 'transport') return 0
+    if (Number(activity.cost_estimate ?? activity.cost) === 0) return 0
+    return ['culture', 'outdoor', 'entertainment', 'other'].includes(type) ? (parseNumericPrice(activity.cost_estimate ?? activity.cost) ?? undefined) : 0
+  }
+
+  const buildTicketLabel = (activity: any, poi: any, ticketPrice?: number): string | undefined => {
+    if (ticketPrice === undefined) return undefined
+    if (ticketPrice <= 0) return '门票免费'
+    const raw = String(activity.ticket_note || poi?.price || '').trim()
+    return raw && raw !== '0' ? `门票 ${raw}` : `门票 ¥${ticketPrice}`
   }
 
   watch(

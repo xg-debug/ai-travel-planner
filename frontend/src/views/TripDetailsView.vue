@@ -1,43 +1,6 @@
 <template>
   <div class="min-h-screen bg-gray-50">
-    <nav class="sticky top-0 z-50 bg-white/90 backdrop-blur-sm border-b border-gray-100">
-      <div class="container mx-auto px-4 py-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center space-x-2">
-            <div class="w-8 h-8 bg-blue-600 rounded-lg"></div>
-            <span class="text-xl font-bold text-gray-800">TravelAI</span>
-          </div>
-          <div class="flex items-center space-x-6">
-            <router-link to="/" class="text-gray-600 hover:text-blue-600 transition-colors">首页</router-link>
-            <router-link to="/history" class="text-gray-600 hover:text-blue-600 transition-colors">旅行历史</router-link>
-            
-            <div v-if="authStore.isAuthenticated" class="relative group flex items-center space-x-4">
-              <button class="flex items-center space-x-2">
-                <div class="w-8 h-8 rounded-full bg-blue-600 overflow-hidden">
-                  <img v-if="authStore.userAvatar" :src="authStore.userAvatar" class="w-full h-full object-cover" />
-                </div>
-                <span class="text-gray-700 font-medium">{{ authStore.userName }}</span>
-              </button>
-              <div class="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl border border-gray-200 shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 z-50">
-                <div class="p-4 border-b border-gray-100">
-                  <div class="font-medium text-gray-900">{{ authStore.userName }}</div>
-                  <div class="text-sm text-gray-600 truncate">{{ authStore.userEmail }}</div>
-                </div>
-                <div class="p-2">
-                  <button @click="authStore.logout" class="w-full px-4 py-2 text-left text-red-600 hover:bg-red-50 rounded-lg flex items-center space-x-2">
-                    <span>退出登录</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div v-else class="flex items-center space-x-3">
-              <button @click="openAuth('login')" class="px-4 py-2 text-gray-700 hover:text-blue-600">登录</button>
-              <button @click="openAuth('register')" class="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700">注册</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </nav>
+    <TravelNav @auth="openAuth" />
 
     <AuthModal v-if="showAuthModal" :show="showAuthModal" :initial-mode="authMode" @close="showAuthModal = false" />
 
@@ -103,7 +66,7 @@
               </button>
             </div>
 
-            <div v-if="activeDay" class="space-y-6">
+              <div v-if="activeDay" class="space-y-6">
               <div class="flex items-center justify-between">
                 <h2 class="text-2xl text-blue-900 font-bold">第 {{ activeDayIndex + 1 }} 天</h2>
                 <div class="flex space-x-3">
@@ -112,6 +75,25 @@
                     {{ isEditingActivities ? '完成编辑' : '编辑排序' }}
                   </button>
                   <button @click="openActivityModal()" class="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700">+ 添加</button>
+                </div>
+              </div>
+
+              <div v-if="activeDay.hotel" class="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-cyan-50 p-5 shadow-sm">
+                <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <div class="mb-1 text-sm font-medium text-blue-600">当日推荐酒店</div>
+                    <div class="text-xl font-bold text-gray-900">{{ activeDay.hotel.name }}</div>
+                    <div v-if="activeDay.hotel.address" class="mt-2 text-sm text-gray-600">📍 {{ activeDay.hotel.address }}</div>
+                    <p v-if="activeDay.hotel.reason" class="mt-3 text-sm leading-6 text-gray-700">{{ activeDay.hotel.reason }}</p>
+                  </div>
+                  <div class="flex shrink-0 gap-2 md:flex-col md:items-end">
+                    <span class="whitespace-nowrap rounded-full bg-white px-3 py-1 text-sm font-semibold text-teal-600 shadow-sm">
+                      {{ formatHotelPrice(activeDay.hotel.priceEstimate) }}
+                    </span>
+                    <span v-if="activeDay.hotel.rating" class="rounded-full bg-white px-3 py-1 text-xs text-amber-600 shadow-sm">
+                      ⭐ {{ activeDay.hotel.rating.toFixed(1) }}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -138,8 +120,18 @@
                       />
                     </div>
                     <div class="flex justify-between mb-2">
-                      <div class="font-bold text-lg text-gray-800">{{ activity.time }} - {{ activity.title }}</div>
-                      <div class="text-teal-600 font-medium">¥{{ activity.cost }}</div>
+                      <div>
+                        <div class="font-bold text-lg text-gray-800">{{ activity.time }} - {{ activity.title }}</div>
+                        <div v-if="activity.ticketLabel" class="mt-2 inline-flex rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
+                          {{ activity.ticketLabel }}
+                        </div>
+                      </div>
+                      <div class="text-right">
+                        <div class="text-teal-600 font-medium">¥{{ activity.cost }}</div>
+                        <div v-if="activity.ticketPrice !== undefined" class="mt-1 text-xs text-gray-500">
+                          门票{{ activity.ticketPrice > 0 ? ` ¥${activity.ticketPrice}` : ' 免费' }}
+                        </div>
+                      </div>
                     </div>
                     <p class="text-gray-600 mb-3 text-sm">{{ activity.description }}</p>
                     <div class="flex space-x-4 text-xs text-gray-500">
@@ -156,7 +148,10 @@
           <div class="space-y-8">
             <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
               <div class="flex justify-between items-center mb-4">
-                <h3 class="font-bold text-gray-800">天气预报</h3>
+                <div>
+                  <h3 class="font-bold text-gray-800">天气预报</h3>
+                  <p class="mt-1 text-xs text-gray-500">{{ weatherCityLabel }}</p>
+                </div>
                 <button @click="refreshWeather" :disabled="isRefreshingWeather" class="text-sm text-blue-600">{{ isRefreshingWeather ? '更新中...' : '刷新' }}</button>
               </div>
               <div v-if="trip.weather?.length" class="space-y-3">
@@ -169,6 +164,35 @@
               <div v-if="weatherTips.length" class="mt-4 p-3 bg-amber-50 rounded text-sm text-amber-800">
                 💡 {{ weatherTips.join(' ') }}
               </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <div class="mb-4 flex items-center justify-between">
+                <h3 class="font-bold text-gray-800">推荐酒店</h3>
+                <span class="text-xs text-gray-400">{{ trip.hotels?.length || 0 }} 家</span>
+              </div>
+              <div v-if="trip.hotels?.length" class="space-y-3">
+                <div
+                  v-for="hotel in trip.hotels"
+                  :key="hotel.id"
+                  class="rounded-xl border border-gray-100 bg-slate-50 p-4"
+                >
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <div class="font-semibold text-gray-900">{{ hotel.name }}</div>
+                      <div v-if="hotel.address" class="mt-1 text-xs text-gray-500">{{ hotel.address }}</div>
+                    </div>
+                    <div class="shrink-0 text-right">
+                      <div class="whitespace-nowrap rounded-full bg-white px-3 py-1 text-sm font-semibold text-teal-600 shadow-sm">
+                        {{ hotel.priceText || formatPriceRange(hotel.priceRange) }}
+                      </div>
+                      <div class="mt-1 text-xs text-amber-600">⭐ {{ hotel.rating.toFixed(1) }}</div>
+                    </div>
+                  </div>
+                  <p class="mt-3 text-sm leading-6 text-gray-600">{{ hotel.description }}</p>
+                </div>
+              </div>
+              <div v-else class="text-sm text-gray-500">本次行程暂无可展示的酒店推荐。</div>
             </div>
 
             <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -225,20 +249,21 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useTripStore } from '@/stores/tripStore'
-import { useAuthStore } from '@/stores/authStore'
 import { tripApi } from '@/services/api'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
+import TravelNav from '@/components/TravelNav.vue'
+import AuthModal from '@/components/AuthModal.vue'
 import type { Activity } from '@/types/trip'
 
 // ===== 基础定义 =====
 const route = useRoute()
 const router = useRouter()
 const tripStore = useTripStore()
-const authStore = useAuthStore()
 
 // 获取 Store 中的数据
 const trip = computed(() => tripStore.currentTrip)
+const weatherCityLabel = computed(() => trip.value?.weather?.[0]?.city || trip.value?.destination || '当前目的地')
 const mappedActivityCount = computed(() => {
   if (!trip.value?.days?.length) return 0
   return trip.value.days.reduce((sum: number, day: any) => {
@@ -273,6 +298,28 @@ const activityForm = ref<Omit<Activity, 'id'>>({
 })
 
 const calculateDayCost = (day: any) => day?.activities?.reduce((sum: number, act: any) => sum + act.cost, 0) || 0
+const formatHotelPrice = (value: string | number | undefined) => {
+  if (value === undefined || value === null || value === '') return '价格待查询'
+  if (typeof value === 'number') return `¥${value}/晚`
+  const text = String(value).trim()
+  if (!text) return '价格待查询'
+  if (text.includes('免费')) return text
+  if (text.startsWith('¥') || text.startsWith('￥')) return text
+  if (/^\d+(\.\d+)?$/.test(text)) return `¥${text}/晚`
+  return text
+}
+
+const formatPriceRange = (value: string | undefined) => {
+  if (value === 'free') return '免费'
+  if (!value) return '价格待查询'
+  const mapping: Record<string, string> = {
+    '$': '经济型',
+    '$$': '中档',
+    '$$$': '舒适型',
+    '$$$$': '高端型'
+  }
+  return mapping[value] || value
+}
 
 // 打开表单
 const openActivityModal = (index = -1) => {
@@ -364,6 +411,7 @@ const refreshWeather = async () => {
     const weatherData = await tripApi.getWeather(trip.value.destination, trip.value.days?.length || 3)
     if (weatherData?.length) {
       const normalizedWeather = weatherData.map((item) => ({
+        city: trip.value?.destination,
         date: item.date,
         high: Number(item.temperature) + 3,
         low: Number(item.temperature) - 3,
@@ -461,6 +509,12 @@ const exportToPDF = async () => {
       pdf.setFontSize(11)
       pdf.text(`Day ${index + 1} - ${day.date}`, 14, y)
       y += lineHeight
+      if (day.hotel?.name) {
+        const hotelLine = `Hotel: ${day.hotel.name} | ${formatHotelPrice(day.hotel.priceEstimate)}`
+        const hotelLines = pdf.splitTextToSize(hotelLine, 180)
+        pdf.text(hotelLines, 16, y)
+        y += lineHeight * hotelLines.length
+      }
       pdf.setFontSize(10)
 
       for (const activity of day.activities) {
@@ -468,7 +522,8 @@ const exportToPDF = async () => {
           pdf.addPage()
           y = 16
         }
-        const text = `${activity.time} ${activity.title} | ${activity.location} | CNY ${activity.cost}`
+        const ticketSuffix = activity.ticketPrice !== undefined ? ` | Ticket ${activity.ticketPrice > 0 ? `CNY ${activity.ticketPrice}` : 'Free'}` : ''
+        const text = `${activity.time} ${activity.title} | ${activity.location} | CNY ${activity.cost}${ticketSuffix}`
         const lines = pdf.splitTextToSize(text, 180)
         pdf.text(lines, 16, y)
         y += lineHeight * lines.length

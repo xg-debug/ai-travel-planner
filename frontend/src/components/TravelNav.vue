@@ -2,7 +2,6 @@
   <nav class="sticky top-0 z-50 bg-white/80 backdrop-blur-light border-b border-travel-border">
     <div class="container mx-auto px-4">
       <div class="flex items-center justify-between h-16">
-        <!-- Logo -->
         <div class="flex items-center space-x-2">
           <div class="travel-icon-container">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -12,32 +11,24 @@
           <span class="text-xl font-display font-bold text-slate-900">智能旅行规划</span>
         </div>
 
-        <!-- 导航链接 -->
         <div class="hidden md:flex items-center space-x-8">
-          <router-link 
-            to="/" 
+          <router-link
+            to="/"
             class="text-gray-600 hover:text-travel-primary transition-colors duration-300 font-medium"
             active-class="text-travel-primary"
           >
             首页
           </router-link>
-          <!-- <router-link 
-            to="/" 
-            class="text-gray-600 hover:text-travel-primary transition-colors duration-300 font-medium"
-            active-class="text-travel-primary"
-          >
-            规划行程
-          </router-link> -->
-          <router-link 
-            to="/map" 
+          <router-link
+            to="/map"
             class="text-gray-600 hover:text-travel-primary transition-colors duration-300 font-medium"
             active-class="text-travel-primary"
           >
             旅行地图
           </router-link>
-          <router-link 
+          <router-link
             v-if="authStore.isAuthenticated"
-            to="/history" 
+            to="/history"
             class="text-gray-600 hover:text-travel-primary transition-colors duration-300 font-medium"
             active-class="text-travel-primary"
           >
@@ -53,7 +44,6 @@
           </button>
         </div>
 
-        <!-- 用户操作 -->
         <div class="flex items-center space-x-4">
           <button
             v-if="!authStore.isAuthenticated"
@@ -91,7 +81,3 @@ import { useAuthStore } from '@/stores/authStore'
 const emit = defineEmits(['auth'])
 const authStore = useAuthStore()
 </script>
-
-<style scoped>
-/* 导航栏特定样式 */
-</style>

@@ -228,6 +228,8 @@ class AMapService:
                 name = _safe_text(poi.get("name"))
                 if not name or name in seen:
                     continue
+                price_text = _safe_text(poi.get("price"), "")
+                poi["price"] = price_text if price_text and price_text != "免费" else "待查询"
                 seen.add(name)
                 results.append(poi)
                 if len(results) >= size:
