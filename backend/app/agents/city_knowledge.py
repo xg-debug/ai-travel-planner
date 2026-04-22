@@ -1,3 +1,4 @@
+import re
 from typing import Iterable, Tuple
 
 GENERIC_LOCATION_KEYWORDS: Tuple[str, ...] = (
@@ -43,6 +44,7 @@ CHAIN_BRAND_HINTS: Tuple[str, ...] = (
     "奈雪",
     "喜茶",
     "海底捞",
+    "方中山",
 )
 
 NON_DESTINATION_CUISINE_HINTS: Tuple[str, ...] = (
@@ -70,6 +72,11 @@ def contains_any(text: str, keywords: Iterable[str]) -> bool:
     return any(keyword in searchable for keyword in keywords)
 
 
+def has_branch_marker(text: str) -> bool:
+    searchable = str(text or "")
+    return bool(re.search(r"(旗舰店|总店|分店|[一二三四五六七八九十\d]+店)", searchable))
+
+
 def get_generic_location_keywords() -> Tuple[str, ...]:
     return GENERIC_LOCATION_KEYWORDS
 
@@ -85,11 +92,13 @@ def score_food_locality(searchable: str, city: str, query: str) -> float:
         score += 1.8
     if contains_any(text, CHAIN_BRAND_HINTS):
         score -= 2.6
+    if has_branch_marker(text):
+        score -= 1.2
 
     if contains_any(query_text, ("早餐", "小吃", "餐厅", "美食", "特色", "本地")):
         if contains_any(text, ("餐饮", "中餐", "面馆", "小吃", "早茶", "饭店", "食府")):
             score += 0.8
-        if contains_any(text, NON_DESTINATION_CUISINE_HINTS) and city not in text and not contains_any(text, LOCAL_FOOD_HINTS):
+        if contains_any(text, NON_DESTINATION_CUISINE_HINTS) and not contains_any(text, (city, "胡辣汤", "水席")):
             score -= 1.4
 
     return score

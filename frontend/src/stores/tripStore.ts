@@ -5,7 +5,7 @@ import type { Trip, TripRequest, TripDay, Activity, WeatherForecast, POI, Budget
 import { useAuthStore } from '@/stores/authStore'
 
 type StreamStepStatus = 'pending' | 'active' | 'done' | 'error'
-type StreamStepKey = 'query_agent' | 'scenic_agent' | 'hotel_agent' | 'planning_agent' | 'poi_agent' | 'weather_tool' | 'budget' | 'summary'
+type StreamStepKey = 'planner_agent' | 'attraction_agent' | 'food_agent' | 'hotel_agent' | 'transport_agent' | 'synthesizer_agent' | 'poi_agent' | 'reviewer_agent' | 'weather_tool' | 'budget' | 'summary'
 
 interface StreamStep {
   key: StreamStepKey
@@ -13,14 +13,17 @@ interface StreamStep {
   status: StreamStepStatus
 }
 
-const STREAM_STEP_ORDER: StreamStepKey[] = ['query_agent', 'scenic_agent', 'hotel_agent', 'planning_agent', 'poi_agent', 'weather_tool', 'budget', 'summary']
+const STREAM_STEP_ORDER: StreamStepKey[] = ['planner_agent', 'attraction_agent', 'food_agent', 'hotel_agent', 'transport_agent', 'synthesizer_agent', 'poi_agent', 'reviewer_agent', 'weather_tool', 'budget', 'summary']
 
 const buildInitialStreamSteps = (): StreamStep[] => [
-  { key: 'query_agent', label: '理解需求', status: 'pending' },
-  { key: 'scenic_agent', label: '搜索景点', status: 'pending' },
+  { key: 'planner_agent', label: '规划任务', status: 'pending' },
+  { key: 'attraction_agent', label: '搜索景点', status: 'pending' },
+  { key: 'food_agent', label: '搜索餐饮', status: 'pending' },
   { key: 'hotel_agent', label: '推荐酒店', status: 'pending' },
-  { key: 'planning_agent', label: '生成行程', status: 'pending' },
+  { key: 'transport_agent', label: '评估动线', status: 'pending' },
+  { key: 'synthesizer_agent', label: '生成行程', status: 'pending' },
   { key: 'poi_agent', label: '补全景点', status: 'pending' },
+  { key: 'reviewer_agent', label: '审查行程', status: 'pending' },
   { key: 'weather_tool', label: '获取天气', status: 'pending' },
   { key: 'budget', label: '预算计算', status: 'pending' },
   { key: 'summary', label: '整理结果', status: 'pending' }
@@ -62,7 +65,7 @@ export const useTripStore = defineStore('trip', () => {
         city: tripRequest.destination,
         days: tripRequest.days,
         preferences: tripRequest.interests,
-        budget: mapBudgetLevel(tripRequest.budget),
+        budget: mapBudgetLevel(tripRequest.budget, tripRequest.days, tripRequest.travelers),
         travelers: tripRequest.travelers,
         start_date: tripRequest.startDate
       }
@@ -234,9 +237,12 @@ export const useTripStore = defineStore('trip', () => {
   }
 
   // Helper functions for data conversion
-  const mapBudgetLevel = (budget: number): string => {
-    if (budget < 1000) return '经济'
-    if (budget < 3000) return '中等'
+  const mapBudgetLevel = (budget: number, days: number, travelers: number): string => {
+    const normalizedDays = Math.max(days || 1, 1)
+    const normalizedTravelers = Math.max(travelers || 1, 1)
+    const perPersonPerDay = budget / normalizedDays / normalizedTravelers
+    if (perPersonPerDay < 400) return '经济'
+    if (perPersonPerDay < 1000) return '中等'
     return '豪华'
   }
 
@@ -248,28 +254,38 @@ export const useTripStore = defineStore('trip', () => {
 
   const convertBudgetBreakdown = (breakdown: any): BudgetCategory[] => {
     if (!breakdown) return []
+    const accommodation = breakdown.accommodation ?? breakdown['住宿'] ?? 0
+    const food = breakdown.food ?? breakdown['餐饮'] ?? 0
+    const transportation = breakdown.transportation ?? breakdown['交通'] ?? 0
+    const tickets = breakdown.tickets ?? breakdown['门票'] ?? 0
+    const shopping = breakdown.shopping ?? breakdown['购物'] ?? 0
     
     return [
-      { name: '住宿', amount: breakdown.accommodation || 0, planned: breakdown.accommodation || 0 },
-      { name: '餐饮', amount: breakdown.food || 0, planned: breakdown.food || 0 },
-      { name: '交通', amount: breakdown.transportation || 0, planned: breakdown.transportation || 0 },
-      { name: '门票', amount: breakdown.tickets || 0, planned: breakdown.tickets || 0 },
-      { name: '购物', amount: breakdown.shopping || 0, planned: breakdown.shopping || 0 }
+      { name: '住宿', amount: accommodation, planned: accommodation },
+      { name: '餐饮', amount: food, planned: food },
+      { name: '交通', amount: transportation, planned: transportation },
+      { name: '门票', amount: tickets, planned: tickets },
+      { name: '购物', amount: shopping, planned: shopping }
     ]
   }
 
   const normalizeStepKey = (step?: string): StreamStepKey | null => {
     if (!step) return null
-    if (step === 'planning_agent_done') return 'planning_agent'
+    if (step === 'synthesizer_agent_done') return 'synthesizer_agent'
+    if (step === 'reflection_rerun') return 'reviewer_agent'
+    if (step === 'workflow_error') return 'reviewer_agent'
     if (STREAM_STEP_ORDER.includes(step as StreamStepKey)) return step as StreamStepKey
     return null
   }
 
   const updateStreamStep = (rawStep?: string, message?: string) => {
     const stepKey = normalizeStepKey(rawStep)
-    if (!stepKey) return
+    if (!stepKey) {
+      if (message) streamingStatus.value = message
+      return
+    }
     const stepIndex = STREAM_STEP_ORDER.indexOf(stepKey)
-    const isDoneSignal = rawStep === 'planning_agent_done'
+    const isDoneSignal = rawStep === 'synthesizer_agent_done'
     streamSteps.value = streamSteps.value.map((step, index) => {
       if (step.status === 'error') return step
       if (index < stepIndex) return { ...step, status: 'done' }
@@ -408,9 +424,29 @@ export const useTripStore = defineStore('trip', () => {
     return ['围绕', '核心体验安排', '简要描述', '推荐描述'].some((keyword) => text.includes(keyword))
   }
 
-  const buildScenicImageUrl = (city: string, location: string, seed: string) => {
-    const safeSeed = encodeURIComponent(seed || `${city}-${location}`)
-    return `https://picsum.photos/seed/${safeSeed}/1200/800`
+  const buildScenicImageUrl = (city: string, location: string, _seed: string) => {
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+        <defs>
+          <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#dbeafe"/>
+            <stop offset="50%" stop-color="#f0fdf4"/>
+            <stop offset="100%" stop-color="#fef3c7"/>
+          </linearGradient>
+        </defs>
+        <rect width="1200" height="800" fill="url(#g)"/>
+        <circle cx="940" cy="180" r="120" fill="rgba(59,130,246,0.12)"/>
+        <circle cx="240" cy="620" r="160" fill="rgba(16,185,129,0.12)"/>
+        <text x="80" y="380" font-size="52" font-family="Arial, sans-serif" fill="#0f172a" font-weight="700">${city || 'Travel'}</text>
+        <text x="80" y="450" font-size="30" font-family="Arial, sans-serif" fill="#334155">${location || 'Scenic View'}</text>
+        <text x="80" y="520" font-size="22" font-family="Arial, sans-serif" fill="#64748b">AI Travel Planner</text>
+      </svg>`
+    )}`
+  }
+
+  const isValidImageUrl = (value: unknown) => {
+    const text = String(value || '').trim()
+    return /^https?:\/\//.test(text) || text.startsWith('data:image/')
   }
 
   const buildRecommendationDescription = (name: string, rec: any, itemIndex: number) => {
@@ -438,12 +474,13 @@ export const useTripStore = defineStore('trip', () => {
     const poi = findPoiByLocation(activity.location || '', poiMap)
     const ticketPrice = normalizeTicketPrice(activity, poi, normalizedType)
     const ticketLabel = buildTicketLabel(activity, poi, ticketPrice)
-    const lat = Number(poi?.lat)
-    const lng = Number(poi?.lng)
+    const activityCoordinates = activity.coordinates || {}
+    const lat = Number(poi?.lat ?? activityCoordinates.lat)
+    const lng = Number(poi?.lng ?? activityCoordinates.lng)
     const description = !isGenericActivityDescription(activity.description)
       ? activity.description
       : (poi?.description || activity.description || '')
-    const image = activity.image || activity.image_url || poi?.image_url
+    const image = [activity.image, activity.image_url, poi?.image_url].find(isValidImageUrl)
     return {
       id: activity.id || `act_${dayIndex + 1}_${activityIndex + 1}`,
       time: normalizeTime(activity.time),

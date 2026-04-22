@@ -70,23 +70,9 @@ class BudgetService:
         try:
             # 获取基准预算
             base_budget = self.budget_levels.get(budget_level, self.budget_levels["中等"])
-            
-            # 计算各项费用
-            breakdown = {}
-            total = 0
-            
-            for category, daily_cost in base_budget.items():
-                category_total = daily_cost * days * travelers
-                breakdown[category] = category_total
-                total += category_total
-            
-            # 根据活动类型调整预算
+            breakdown = self._calculate_breakdown_from_itinerary(itinerary, travelers, base_budget)
+            total = sum(int(value) for value in breakdown.values())
             activity_adjustment = self._calculate_activity_adjustment(itinerary)
-            total *= activity_adjustment
-            
-            # 调整各项费用比例
-            for category in breakdown:
-                breakdown[category] = int(breakdown[category] * activity_adjustment)
             
             # 生成预算报告
             budget_report = {
@@ -108,6 +94,79 @@ class BudgetService:
         except Exception as e:
             logger.error(f"Error estimating budget: {e}")
             return self._get_fallback_budget(days, travelers, budget_level)
+
+    def _safe_number(self, value: Any) -> float:
+        try:
+            if value is None:
+                return 0.0
+            if isinstance(value, (int, float)):
+                return float(value)
+            import re
+            matched = re.search(r"\d+(?:\.\d+)?", str(value))
+            return float(matched.group()) if matched else 0.0
+        except Exception:
+            return 0.0
+
+    def _get_activity_category(self, activity: Dict[str, Any]) -> str:
+        text = " ".join(
+            [
+                str(activity.get("title", "")),
+                str(activity.get("type", "")),
+                str(activity.get("description", "")),
+                str(activity.get("location", "")),
+            ]
+        )
+        if any(token in text for token in ("早餐", "午餐", "晚餐", "餐", "美食", "小吃", "咖啡", "茶")):
+            return "food"
+        if any(token in text for token in ("地铁", "打车", "公交", "交通", "通勤", "车程")):
+            return "transportation"
+        if any(token in text for token in ("购物", "商圈", "步行街", "伴手礼")):
+            return "shopping"
+        return "tickets"
+
+    def _calculate_breakdown_from_itinerary(
+        self,
+        itinerary: List[Dict[str, Any]],
+        travelers: int,
+        base_budget: Dict[str, int],
+    ) -> Dict[str, int]:
+        days = len(itinerary) if itinerary else 1
+        breakdown = {
+            "accommodation": 0.0,
+            "food": 0.0,
+            "transportation": 0.0,
+            "tickets": 0.0,
+            "shopping": 0.0,
+        }
+
+        for day in itinerary:
+            hotel = day.get("hotel_recommendation") or day.get("hotel") or {}
+            hotel_price = self._safe_number(hotel.get("price_estimate") or hotel.get("priceEstimate") or hotel.get("price"))
+            breakdown["accommodation"] += hotel_price if hotel_price > 0 else float(base_budget["accommodation"]) * travelers
+
+            for activity in day.get("activities", []) or []:
+                explicit_cost = self._safe_number(activity.get("cost_estimate") or activity.get("cost"))
+                ticket_price = self._safe_number(activity.get("ticket_price") or activity.get("ticketPrice"))
+                category = self._get_activity_category(activity)
+                if category == "food":
+                    breakdown["food"] += explicit_cost or float(base_budget["food"])
+                elif category == "transportation":
+                    breakdown["transportation"] += explicit_cost or float(base_budget["transportation"]) * 0.5
+                elif category == "shopping":
+                    breakdown["shopping"] += explicit_cost or float(base_budget["shopping"]) * 0.3
+                else:
+                    breakdown["tickets"] += ticket_price if ticket_price > 0 else explicit_cost
+
+        if breakdown["food"] <= 0:
+            breakdown["food"] = float(base_budget["food"]) * travelers * days
+        if breakdown["transportation"] <= 0:
+            breakdown["transportation"] = float(base_budget["transportation"]) * travelers * max(days - 1, 1)
+        if breakdown["tickets"] <= 0:
+            breakdown["tickets"] = float(base_budget["tickets"]) * travelers * days * 0.7
+        if breakdown["shopping"] <= 0:
+            breakdown["shopping"] = float(base_budget["shopping"]) * travelers * days * 0.4
+
+        return {key: int(round(value)) for key, value in breakdown.items()}
     
     def _calculate_activity_adjustment(self, itinerary: List[Dict[str, Any]]) -> float:
         """根据活动类型计算预算调整系数"""

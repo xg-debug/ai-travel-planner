@@ -1,0 +1,143 @@
+{
+  "database": {
+    "name": "ai_travel_planner",
+    "engine": "MySQL 8.0",
+    "charset": "utf8mb4",
+    "collation": "utf8mb4_unicode_ci",
+    "source_of_truth": "backend/schema.sql"
+  },
+  "tables": [
+    {
+      "name": "users",
+      "status": "retain",
+      "purpose": "Store account identity and base profile fields.",
+      "primary_key": ["id"],
+      "indexes": [
+        { "name": "uq_users_email", "columns": ["email"], "unique": true },
+        { "name": "idx_users_email", "columns": ["email"], "unique": false }
+      ],
+      "columns": [
+        { "name": "id", "type": "CHAR(36)", "nullable": false },
+        { "name": "email", "type": "VARCHAR(255)", "nullable": false },
+        { "name": "password_hash", "type": "VARCHAR(255)", "nullable": false },
+        { "name": "name", "type": "VARCHAR(120)", "nullable": false },
+        { "name": "avatar_url", "type": "VARCHAR(500)", "nullable": true },
+        { "name": "email_verified", "type": "TINYINT(1)", "nullable": false, "default": 0 },
+        { "name": "created_at", "type": "DATETIME", "nullable": false, "default": "CURRENT_TIMESTAMP" },
+        { "name": "updated_at", "type": "DATETIME", "nullable": false, "default": "CURRENT_TIMESTAMP", "on_update": "CURRENT_TIMESTAMP" },
+        { "name": "last_login_at", "type": "DATETIME", "nullable": true }
+      ]
+    },
+    {
+      "name": "trip_plans",
+      "status": "retain",
+      "purpose": "Primary trip storage table using structured summary columns plus a full itinerary payload snapshot.",
+      "primary_key": ["id"],
+      "foreign_keys": [
+        {
+          "name": "fk_trip_plans_user",
+          "columns": ["user_id"],
+          "references": { "table": "users", "columns": ["id"] },
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        { "name": "idx_trip_plans_user_id", "columns": ["user_id"], "unique": false },
+        { "name": "idx_trip_plans_destination", "columns": ["destination"], "unique": false },
+        { "name": "idx_trip_plans_status", "columns": ["status"], "unique": false }
+      ],
+      "columns": [
+        { "name": "id", "type": "CHAR(36)", "nullable": false },
+        { "name": "user_id", "type": "CHAR(36)", "nullable": false },
+        { "name": "destination", "type": "VARCHAR(255)", "nullable": false },
+        { "name": "start_date", "type": "VARCHAR(20)", "nullable": false },
+        { "name": "end_date", "type": "VARCHAR(20)", "nullable": false },
+        { "name": "travelers", "type": "INT", "nullable": false, "default": 1 },
+        { "name": "interests_json", "type": "JSON", "nullable": false },
+        { "name": "budget_total", "type": "DECIMAL(12,2)", "nullable": false, "default": 0.0 },
+        { "name": "budget_currency", "type": "VARCHAR(10)", "nullable": false, "default": "CNY" },
+        { "name": "status", "type": "VARCHAR(20)", "nullable": false, "default": "planned" },
+        {
+          "name": "cover_image_url",
+          "type": "VARCHAR(500)",
+          "nullable": true,
+          "notes": "Only persist short, durable http/https URLs. Do not store data:image placeholders."
+        },
+        { "name": "payload_json", "type": "LONGTEXT", "nullable": false },
+        { "name": "created_at", "type": "DATETIME", "nullable": false, "default": "CURRENT_TIMESTAMP" },
+        { "name": "updated_at", "type": "DATETIME", "nullable": false, "default": "CURRENT_TIMESTAMP", "on_update": "CURRENT_TIMESTAMP" }
+      ]
+    },
+    {
+      "name": "password_reset_tokens",
+      "status": "retain",
+      "purpose": "Store password reset token hashes, expiry and usage status.",
+      "primary_key": ["id"],
+      "foreign_keys": [
+        {
+          "name": "fk_password_reset_tokens_user",
+          "columns": ["user_id"],
+          "references": { "table": "users", "columns": ["id"] },
+          "on_delete": "CASCADE"
+        }
+      ],
+      "indexes": [
+        { "name": "uq_password_reset_tokens_token_hash", "columns": ["token_hash"], "unique": true },
+        { "name": "idx_password_reset_tokens_user_id", "columns": ["user_id"], "unique": false },
+        { "name": "idx_password_reset_tokens_expires_at", "columns": ["expires_at"], "unique": false }
+      ],
+      "columns": [
+        { "name": "id", "type": "CHAR(36)", "nullable": false },
+        { "name": "user_id", "type": "CHAR(36)", "nullable": false },
+        { "name": "token_hash", "type": "CHAR(64)", "nullable": false },
+        { "name": "expires_at", "type": "DATETIME", "nullable": false },
+        { "name": "used_at", "type": "DATETIME", "nullable": true },
+        { "name": "created_at", "type": "DATETIME", "nullable": false, "default": "CURRENT_TIMESTAMP" }
+      ]
+    }
+  ],
+  "removed_or_not_retained": [
+    {
+      "name": "trips",
+      "status": "remove",
+      "reason": "Old normalized trip header table. No longer used by online save/read flows."
+    },
+    {
+      "name": "trip_days",
+      "status": "remove",
+      "reason": "Old normalized day table tied to removed trips design."
+    },
+    {
+      "name": "trip_activities",
+      "status": "remove",
+      "reason": "Old normalized activity table tied to removed trip_days design."
+    },
+    {
+      "name": "user_preferences",
+      "status": "remove",
+      "reason": "Referenced only by outdated docs. No active model, migration or API usage."
+    },
+    {
+      "name": "feedbacks",
+      "status": "remove",
+      "reason": "Referenced only by outdated docs. No active table in backend/schema.sql."
+    }
+  ],
+  "recommended_future_tables": [
+    {
+      "name": "trip_generation_jobs",
+      "status": "future",
+      "reason": "Persist each planning request for observability and replay."
+    },
+    {
+      "name": "trip_generation_tasks",
+      "status": "future",
+      "reason": "Persist per-agent task execution, status, retries and timings."
+    },
+    {
+      "name": "trip_generation_events",
+      "status": "future",
+      "reason": "Persist streamed events, reflection reruns, tool errors and fallback traces."
+    }
+  ]
+}

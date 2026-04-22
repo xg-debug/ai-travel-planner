@@ -25,6 +25,11 @@ def weather_tool_step(state: Dict[str, Any]) -> Dict[str, Any]:
     return {"weather_data": weather_data}
 
 
+def workflow_error_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    pending_steps = [task.get("step", "") for task in (state.get("tasks", []) or []) if task.get("status") == "pending"]
+    raise RuntimeError(f"任务工作流阻塞，存在未完成但不可调度的任务: {pending_steps}")
+
+
 def budget_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """预算估算步骤。"""
     logger.info("Estimating budget for %s days trip", state["days"])

@@ -7,11 +7,13 @@ import json
 from pydantic import BaseModel, Field
 from app.graph.state import TripRequest, TripResponse, PoiDetails, WeatherInfo
 from app.graph.graph import app_trip_graph, trip_planner
+from app.orchestration.task_router import TASK_STEP_MESSAGES, get_ready_tasks, route_next_step
 from app.api.auth import get_current_user
 from app.core.database import get_db
 from app.models.trip_plan import TripPlan
 from app.models.user import User
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from app.services.amap_service import search_pois, get_weather_forecast, calculate_route
 from app.services.recommendation_service import get_recommendations
@@ -51,6 +53,14 @@ class TripPlanPayload(BaseModel):
     plan: str = ""
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
+
+    def to_storage_dict(self, *, plan_id: Optional[str] = None, created_at: Optional[str] = None) -> Dict[str, Any]:
+        data = self.model_dump()
+        if plan_id:
+            data["id"] = plan_id
+        if created_at:
+            data["createdAt"] = created_at
+        return data
 
 
 def _to_state(request: TripRequest) -> Dict[str, Any]:
@@ -169,44 +179,46 @@ def create_trip_plan(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    plan_id = payload.id or ""
-    existing = None
-    if plan_id:
-        existing = db.execute(
-            select(TripPlan).where(TripPlan.id == plan_id, TripPlan.user_id == current_user.id)
-        ).scalar_one_or_none()
+    try:
+        plan_id = payload.id or ""
+        existing = None
+        if plan_id:
+            existing = db.execute(
+                select(TripPlan).where(TripPlan.id == plan_id, TripPlan.user_id == current_user.id)
+            ).scalar_one_or_none()
 
-    data = payload.model_dump()
-    data["id"] = existing.id if existing else (payload.id or "")
-    data["createdAt"] = data.get("createdAt") or (existing.created_at.isoformat() if existing else None)
+        data = payload.to_storage_dict(
+            plan_id=existing.id if existing else (payload.id or None),
+            created_at=(existing.created_at.isoformat() if existing else None),
+        )
 
-    if existing:
-        existing.destination = payload.destination
-        existing.start_date = payload.startDate
-        existing.end_date = payload.endDate
-        existing.payload_json = json.dumps(data, ensure_ascii=False)
-        db.add(existing)
+        if existing:
+            existing.sync_from_payload(data)
+            db.add(existing)
+            db.commit()
+            db.refresh(existing)
+            return existing.payload()
+
+        row = TripPlan(
+            user_id=current_user.id,
+            destination=payload.destination,
+            start_date=payload.startDate,
+            end_date=payload.endDate,
+        )
+        if payload.id:
+            row.id = payload.id
+        row.sync_from_payload(data)
+        db.add(row)
         db.commit()
-        db.refresh(existing)
-        return existing.payload()
-
-    row_kwargs = {
-        "user_id": current_user.id,
-        "destination": payload.destination,
-        "start_date": payload.startDate,
-        "end_date": payload.endDate,
-        "payload_json": json.dumps(data, ensure_ascii=False),
-    }
-    if payload.id:
-        row_kwargs["id"] = payload.id
-    row = TripPlan(**row_kwargs)
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    result = row.payload()
-    if not result.get("id"):
-        result["id"] = row.id
-    return result
+        db.refresh(row)
+        result = row.payload()
+        if not result.get("id"):
+            result["id"] = row.id
+        return result
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Error saving trip plan: %s", exc)
+        raise HTTPException(status_code=500, detail="保存行程失败，请稍后重试")
 
 
 @router.put("/plans/{plan_id}")
@@ -216,22 +228,28 @@ def update_trip_plan(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    row = db.execute(
-        select(TripPlan).where(TripPlan.id == plan_id, TripPlan.user_id == current_user.id)
-    ).scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=404, detail="行程不存在")
+    try:
+        row = db.execute(
+            select(TripPlan).where(TripPlan.id == plan_id, TripPlan.user_id == current_user.id)
+        ).scalar_one_or_none()
+        if not row:
+            raise HTTPException(status_code=404, detail="行程不存在")
 
-    data = payload.model_dump()
-    data["id"] = plan_id
-    row.destination = payload.destination
-    row.start_date = payload.startDate
-    row.end_date = payload.endDate
-    row.payload_json = json.dumps(data, ensure_ascii=False)
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row.payload()
+        data = payload.to_storage_dict(
+            plan_id=plan_id,
+            created_at=(row.payload().get("createdAt") or row.created_at.isoformat()),
+        )
+        row.sync_from_payload(data)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row.payload()
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.error("Error updating trip plan: %s", exc)
+        raise HTTPException(status_code=500, detail="更新行程失败，请稍后重试")
 
 
 @router.delete("/plans/{plan_id}")
@@ -258,30 +276,51 @@ async def plan_trip_stream(request: TripRequest):
         state = _to_state(request)
         try:
             _validate_trip_request(request)
+            loop_count = 0
 
-            yield _sse("status", {"step": "query_agent", "message": "理解旅行需求与规划重点"})
+            yield _sse("status", {"step": "planner_agent", "message": TASK_STEP_MESSAGES.get("planner_agent", "理解旅行需求并拆分执行任务")})
             await asyncio.sleep(0)
-            state.update(trip_planner.nodes["query_agent"](state))
+            state.update(trip_planner.nodes["planner_agent"](state))
 
-            yield _sse("status", {"step": "scenic_agent", "message": "搜索评分较高的真实景点"})
-            await asyncio.sleep(0)
-            state.update(trip_planner.nodes["scenic_agent"](state))
+            while True:
+                loop_count += 1
+                if loop_count > 64:
+                    raise RuntimeError("任务工作流执行次数超过上限，疑似进入循环。")
+                next_step = route_next_step(state)
+                if next_step == "weather_tool":
+                    break
+                if next_step == "workflow_error":
+                    yield _sse("status", {"step": "workflow_error", "message": "任务调度出现阻塞，正在中止本次规划"})
+                    await asyncio.sleep(0)
+                    state.update(trip_planner.nodes["workflow_error"](state))
+                    break
+                if next_step == "parallel_tasks":
+                    ready_tasks = get_ready_tasks(state)
+                    for task in ready_tasks:
+                        step = str(task.get("step", ""))
+                        yield _sse("status", {"step": step, "message": TASK_STEP_MESSAGES.get(step, "正在并行执行任务")})
+                    await asyncio.sleep(0)
+                    state.update(trip_planner.nodes["parallel_tasks"](state))
+                    continue
 
-            yield _sse("status", {"step": "hotel_agent", "message": "推荐适合路线的酒店"})
-            await asyncio.sleep(0)
-            state.update(trip_planner.nodes["hotel_agent"](state))
+                yield _sse("status", {"step": next_step, "message": TASK_STEP_MESSAGES.get(next_step, "正在执行任务")})
+                await asyncio.sleep(0)
+                state.update(trip_planner.nodes[next_step](state))
 
-            yield _sse("status", {"step": "planning_agent", "message": "AI正在生成行程"})
-            await asyncio.sleep(0)
-            state.update(trip_planner.nodes["planning_agent"](state))
-            yield _sse(
-                "status",
-                {"step": "planning_agent_done", "message": "行程草案已生成", "days": len(state.get("plan", []))},
-            )
-
-            yield _sse("status", {"step": "poi_agent", "message": "补全景点坐标、图片与故事"})
-            await asyncio.sleep(0)
-            state.update(trip_planner.nodes["poi_agent"](state))
+                if next_step == "synthesizer_agent":
+                    yield _sse(
+                        "status",
+                        {"step": "synthesizer_agent_done", "message": "行程草案已生成", "days": len(state.get("plan", []))},
+                    )
+                if next_step == "reviewer_agent" and state.get("reflection_context", {}).get("action") == "rerun_synthesizer":
+                    yield _sse(
+                        "status",
+                        {
+                            "step": "reflection_rerun",
+                            "message": "审查发现关键问题，正在重生成行程草案",
+                            "issues": len(state.get("review_issues", []) or []),
+                        },
+                    )
 
             yield _sse("status", {"step": "weather_tool", "message": "通过天气工具获取天气信息"})
             await asyncio.sleep(0)

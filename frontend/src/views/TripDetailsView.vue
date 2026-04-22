@@ -78,26 +78,105 @@
                 </div>
               </div>
 
-              <div v-if="activeDay.hotel" class="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-cyan-50 p-5 shadow-sm">
-                <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <div class="mb-1 text-sm font-medium text-blue-600">当日推荐酒店</div>
-                    <div class="text-xl font-bold text-gray-900">{{ activeDay.hotel.name }}</div>
-                    <div v-if="activeDay.hotel.address" class="mt-2 text-sm text-gray-600">📍 {{ activeDay.hotel.address }}</div>
-                    <p v-if="activeDay.hotel.reason" class="mt-3 text-sm leading-6 text-gray-700">{{ activeDay.hotel.reason }}</p>
+              <div v-if="!isEditingActivities" class="space-y-8">
+                <section v-if="dayAttractions.length" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <div class="mb-5 flex items-center justify-between">
+                    <div>
+                      <h3 class="text-lg font-bold text-slate-900">景点安排</h3>
+                      <p class="mt-1 text-sm text-slate-500">把当天重点景点集中展示，路线更好扫一眼看清。</p>
+                    </div>
+                    <span class="rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">{{ dayAttractions.length }} 个景点</span>
                   </div>
-                  <div class="flex shrink-0 gap-2 md:flex-col md:items-end">
-                    <span class="whitespace-nowrap rounded-full bg-white px-3 py-1 text-sm font-semibold text-teal-600 shadow-sm">
-                      {{ formatHotelPrice(activeDay.hotel.priceEstimate) }}
-                    </span>
-                    <span v-if="activeDay.hotel.rating" class="rounded-full bg-white px-3 py-1 text-xs text-amber-600 shadow-sm">
-                      ⭐ {{ activeDay.hotel.rating.toFixed(1) }}
-                    </span>
+                  <div class="grid gap-5 md:grid-cols-2">
+                    <article v-for="(activity, index) in dayAttractions" :key="activity.id" class="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/70">
+                      <div class="relative">
+                        <img :src="getActivityImage(activity)" :alt="activity.title" class="h-52 w-full object-cover object-center" loading="lazy" decoding="async" @error="handleImageError" />
+                        <div class="absolute left-4 top-4 rounded-full bg-white/92 px-3 py-1 text-xs font-semibold text-slate-700 shadow">
+                          景点 {{ index + 1 }}
+                        </div>
+                        <div v-if="activity.ticketPrice !== undefined" class="absolute right-4 top-4 rounded-full bg-white/95 px-3 py-1 text-sm font-semibold text-teal-700 shadow">
+                          {{ activity.ticketPrice > 0 ? `¥${activity.ticketPrice}` : '免费' }}
+                        </div>
+                      </div>
+                      <div class="space-y-3 p-5">
+                        <div class="flex items-start justify-between gap-4">
+                          <div>
+                            <div class="text-xl font-bold text-slate-900">{{ activity.location }}</div>
+                            <div class="mt-1 text-sm text-slate-500">{{ activity.time }} · {{ activity.duration }} 分钟</div>
+                          </div>
+                          <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{{ activityTypeLabel(activity) }}</span>
+                        </div>
+                        <p class="text-sm leading-7 text-slate-600">{{ activity.description }}</p>
+                        <div class="text-sm text-slate-500">地址：{{ activity.location }}</div>
+                      </div>
+                    </article>
                   </div>
-                </div>
+                </section>
+
+                <section v-if="activeDay.hotel" class="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-cyan-50 p-5 shadow-sm">
+                  <div class="mb-4 text-sm font-medium text-blue-600">住宿推荐</div>
+                  <div class="grid gap-4 md:grid-cols-[1.3fr_0.7fr]">
+                    <div>
+                      <div class="text-xl font-bold text-gray-900">{{ activeDay.hotel.name }}</div>
+                      <div v-if="activeDay.hotel.address" class="mt-2 text-sm text-gray-600">📍 {{ activeDay.hotel.address }}</div>
+                      <p v-if="activeDay.hotel.reason" class="mt-3 text-sm leading-6 text-gray-700">{{ activeDay.hotel.reason }}</p>
+                    </div>
+                    <div class="flex flex-col gap-3 rounded-2xl bg-white/80 p-4 shadow-sm">
+                      <div class="text-sm text-slate-500">住宿价格</div>
+                      <div class="text-xl font-bold text-teal-700">{{ formatHotelPrice(activeDay.hotel.priceEstimate) }}</div>
+                      <div v-if="activeDay.hotel.rating" class="text-sm text-amber-600">评分：{{ activeDay.hotel.rating.toFixed(1) }}</div>
+                    </div>
+                  </div>
+                </section>
+
+                <section v-if="dayMeals.length" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <div class="mb-5 flex items-center justify-between">
+                    <div>
+                      <h3 class="text-lg font-bold text-slate-900">餐饮安排</h3>
+                      <p class="mt-1 text-sm text-slate-500">把早餐、午餐、晚餐放在一起，方便查看整天的节奏搭配。</p>
+                    </div>
+                    <span class="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">{{ dayMeals.length }} 个餐饮点</span>
+                  </div>
+                  <div class="space-y-4">
+                    <article v-for="meal in dayMeals" :key="meal.id" class="grid gap-4 rounded-2xl border border-amber-100 bg-amber-50/40 p-4 md:grid-cols-[220px_1fr]">
+                      <div class="overflow-hidden rounded-2xl border border-amber-100 bg-white">
+                        <img :src="getActivityImage(meal)" :alt="meal.title" class="h-40 w-full object-cover object-center" loading="lazy" decoding="async" @error="handleImageError" />
+                      </div>
+                      <div class="space-y-3">
+                        <div class="flex items-start justify-between gap-4">
+                          <div>
+                            <div class="text-lg font-bold text-slate-900">{{ meal.time }} · {{ meal.title }}</div>
+                            <div class="mt-1 text-sm text-slate-500">{{ meal.location }}</div>
+                          </div>
+                          <div class="text-right">
+                            <div class="text-lg font-semibold text-teal-700">¥{{ meal.cost }}</div>
+                            <div v-if="meal.ticketLabel" class="mt-1 text-xs text-slate-400">{{ meal.ticketLabel }}</div>
+                          </div>
+                        </div>
+                        <p class="text-sm leading-7 text-slate-600">{{ meal.description }}</p>
+                      </div>
+                    </article>
+                  </div>
+                </section>
+
+                <section v-if="dayOtherActivities.length" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                  <h3 class="mb-4 text-lg font-bold text-slate-900">其他安排</h3>
+                  <div class="space-y-3">
+                    <div v-for="activity in dayOtherActivities" :key="activity.id" class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                      <div class="flex items-start justify-between gap-4">
+                        <div>
+                          <div class="font-semibold text-slate-900">{{ activity.time }} · {{ activity.title }}</div>
+                          <div class="mt-1 text-sm text-slate-500">{{ activity.location }}</div>
+                        </div>
+                        <span class="rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">{{ activity.type }}</span>
+                      </div>
+                      <p class="mt-3 text-sm leading-6 text-slate-600">{{ activity.description }}</p>
+                    </div>
+                  </div>
+                </section>
               </div>
 
-              <div class="space-y-6">
+              <div v-else class="space-y-6">
                 <div v-for="(activity, index) in activeDay.activities" :key="activity.id" class="relative pl-8 pb-4 border-l-2 border-blue-100 group">
                   <div class="absolute left-[-9px] top-0 w-4 h-4 rounded-full bg-blue-500 border-2 border-white"></div>
                   
@@ -111,7 +190,7 @@
                   <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
                     <div v-if="activity.image" class="mb-3 overflow-hidden rounded-lg border border-gray-100">
                       <img
-                        :src="getActivityImage(activity, index)"
+                        :src="getActivityImage(activity)"
                         :alt="activity.title"
                         class="h-52 w-full object-cover object-center md:h-60"
                         loading="lazy"
@@ -283,6 +362,35 @@ const openAuth = (mode: 'login' | 'register') => {
 // ===== 行程与活动逻辑 =====
 const activeDayIndex = ref(0)
 const activeDay = computed(() => trip.value?.days?.[activeDayIndex.value])
+const textIncludesAny = (activity: Activity | any, keywords: string[]) => {
+  const text = [activity?.title, activity?.location, activity?.description, activity?.notes]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return keywords.some((keyword) => text.includes(keyword.toLowerCase()))
+}
+
+const isMealLikeActivity = (activity: Activity | any) => {
+  return activity?.type === 'food' || textIncludesAny(activity, ['饭店', '餐厅', '餐馆', '小吃', '早餐', '午餐', '晚餐', '咖啡', '面馆', '酒家'])
+}
+
+const isScenicLikeActivity = (activity: Activity | any) => {
+  if (isMealLikeActivity(activity)) return false
+  return activity?.type === 'culture'
+    || activity?.type === 'outdoor'
+    || activity?.type === 'shopping'
+    || textIncludesAny(activity, ['公园', '博物馆', '旧址', '故居', '景区', '街区', '古镇', '湖', '塔', '寺', '展馆', '美术馆', '遗址'])
+}
+
+const dayAttractions = computed(() =>
+  (activeDay.value?.activities || []).filter((activity) => isScenicLikeActivity(activity))
+)
+const dayMeals = computed(() =>
+  (activeDay.value?.activities || []).filter((activity) => isMealLikeActivity(activity))
+)
+const dayOtherActivities = computed(() =>
+  (activeDay.value?.activities || []).filter((activity) => !isScenicLikeActivity(activity) && !isMealLikeActivity(activity))
+)
 const isEditingActivities = ref(false)
 
 const showActivityModal = ref(false)
@@ -319,6 +427,17 @@ const formatPriceRange = (value: string | undefined) => {
     '$$$$': '高端型'
   }
   return mapping[value] || value
+}
+
+const activityTypeLabel = (activity: Activity | any) => {
+  if (isMealLikeActivity(activity)) return '餐饮'
+  if (textIncludesAny(activity, ['博物馆', '旧址', '故居', '展馆', '美术馆', '遗址'])) return '人文'
+  if (textIncludesAny(activity, ['公园', '湿地', '湖', '山', '森林'])) return '自然'
+  if (textIncludesAny(activity, ['街区', '古镇', '商圈', '步行街'])) return '街区'
+  if (activity?.type === 'shopping') return '街区'
+  if (activity?.type === 'culture') return '人文'
+  if (activity?.type === 'outdoor') return '自然'
+  return '体验'
 }
 
 // 打开表单
@@ -444,23 +563,38 @@ const getWeatherIcon = (condition: string) => {
   return iconMap[condition] || '🌤️'
 }
 
-const fallbackImage = 'https://picsum.photos/seed/travel-fallback/1200/800'
+const fallbackImage = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+    <defs>
+      <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#e0f2fe"/>
+        <stop offset="100%" stop-color="#fef3c7"/>
+      </linearGradient>
+    </defs>
+    <rect width="1200" height="800" fill="url(#g)"/>
+    <text x="80" y="390" font-size="56" font-family="Arial, sans-serif" fill="#0f172a" font-weight="700">Travel Image</text>
+    <text x="80" y="460" font-size="28" font-family="Arial, sans-serif" fill="#475569">Image unavailable</text>
+  </svg>`
+)}`
 
-const getActivityImage = (activity: any, index: number) => {
+const getActivityImage = (activity: any) => {
   if (activity?.image) {
-    const reusedEarlier = (trip.value?.days || []).some((day: any, dayIndex: number) =>
-      (day.activities || []).some((item: any, itemIndex: number) => {
-        if (dayIndex > activeDayIndex.value) return false
-        if (dayIndex === activeDayIndex.value && itemIndex >= index) return false
-        return item?.image && item.image === activity.image
-      })
-    )
-    if (!reusedEarlier) return activity.image
+    return activity.image
   }
-  const seed = encodeURIComponent(
-    `${trip.value?.destination || 'trip'}-${activeDayIndex.value}-${index}-${activity?.location || activity?.title || 'activity'}`
-  )
-  return `https://picsum.photos/seed/${seed}/1200/800`
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#dbeafe"/>
+          <stop offset="100%" stop-color="#dcfce7"/>
+        </linearGradient>
+      </defs>
+      <rect width="1200" height="800" fill="url(#g)"/>
+      <text x="80" y="360" font-size="52" font-family="Arial, sans-serif" fill="#0f172a" font-weight="700">${trip.value?.destination || 'Trip'}</text>
+      <text x="80" y="430" font-size="28" font-family="Arial, sans-serif" fill="#334155">${activity?.location || activity?.title || 'Activity'}</text>
+      <text x="80" y="490" font-size="22" font-family="Arial, sans-serif" fill="#64748b">AI Travel Planner</text>
+    </svg>`
+  )}`
 }
 
 const handleImageError = (event: Event) => {
