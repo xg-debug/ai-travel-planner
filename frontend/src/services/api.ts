@@ -127,8 +127,14 @@ export interface WeatherApiItem {
   date: string
   temperature: number
   condition: string
+  day_condition?: string
+  night_condition?: string
   humidity: number
   wind_speed: number
+  day_wind_direction?: string
+  night_wind_direction?: string
+  day_wind_power?: string
+  night_wind_power?: string
   icon: string
 }
 

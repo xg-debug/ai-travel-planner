@@ -33,20 +33,43 @@
         </div>
 
         <div class="mb-8 grid gap-6 lg:grid-cols-3">
-          <div class="lg:col-span-2 rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+          <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm lg:col-span-2">
             <h2 class="mb-3 text-lg font-bold text-gray-900">行程概览</h2>
-            <p class="whitespace-pre-line text-sm leading-7 text-gray-700">
-              {{ trip.plan || '已生成行程，可在下方按天查看并编辑细节。' }}
-            </p>
+            <div
+              class="trip-plan-content prose prose-slate max-w-none text-sm leading-7"
+              v-html="renderedPlanHtml"
+            ></div>
           </div>
-          <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
-            <h2 class="mb-3 text-lg font-bold text-gray-900">景点地图</h2>
-            <p class="mb-4 text-sm text-gray-600">
-              已识别可定位活动：{{ mappedActivityCount }} 个
-            </p>
+          <div class="overflow-hidden rounded-2xl border border-sky-100 bg-[radial-gradient(circle_at_top_right,#dbeafe_0%,#eff6ff_38%,#ffffff_100%)] p-6 shadow-sm">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <h2 class="text-lg font-bold text-slate-900">景点地图</h2>
+                <p class="mt-2 text-sm text-slate-600">已识别可定位活动 {{ mappedActivityCount }} 个，按天查看路线重点与落点。</p>
+              </div>
+              <div class="rounded-2xl bg-white/80 px-3 py-2 text-right shadow-sm">
+                <div class="text-xs uppercase tracking-[0.18em] text-slate-400">Map</div>
+                <div class="text-sm font-semibold text-slate-900">{{ trip.days.length }} 天</div>
+              </div>
+            </div>
+            <div class="mt-5 grid gap-3">
+              <div
+                v-for="summary in routeDaySummaries"
+                :key="summary.label"
+                class="rounded-2xl border border-white/80 bg-white/85 p-4 shadow-sm"
+              >
+                <div class="flex items-center justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="text-sm font-semibold text-slate-900">{{ summary.label }}</div>
+                    <div class="mt-1 text-sm text-slate-500">{{ summary.title }}</div>
+                  </div>
+                  <span class="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">{{ summary.countLabel }}</span>
+                </div>
+                <div class="mt-3 text-xs leading-5 text-slate-500">{{ summary.preview }}</div>
+              </div>
+            </div>
             <button
               @click="router.push('/map')"
-              class="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              class="mt-5 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-blue-700"
             >
               打开地图查看路线
             </button>
@@ -145,13 +168,16 @@
                       <div class="space-y-3">
                         <div class="flex items-start justify-between gap-4">
                           <div>
-                            <div class="text-lg font-bold text-slate-900">{{ meal.time }} · {{ meal.title }}</div>
-                            <div class="mt-1 text-sm text-slate-500">{{ meal.location }}</div>
+                            <div class="text-lg font-bold text-slate-900">{{ mealDisplayName(meal) }}</div>
+                            <div class="mt-1 text-sm text-slate-500">{{ meal.time }} · {{ meal.location }}</div>
                           </div>
                           <div class="text-right">
                             <div class="text-lg font-semibold text-teal-700">¥{{ meal.cost }}</div>
-                            <div v-if="meal.ticketLabel" class="mt-1 text-xs text-slate-400">{{ meal.ticketLabel }}</div>
+                            <div class="mt-1 text-xs text-slate-400">预计餐费</div>
                           </div>
+                        </div>
+                        <div v-if="mealCuisineHint(meal)" class="inline-flex rounded-full bg-white px-3 py-1 text-xs font-medium text-amber-700 shadow-sm">
+                          推荐菜品：{{ mealCuisineHint(meal) }}
                         </div>
                         <p class="text-sm leading-7 text-slate-600">{{ meal.description }}</p>
                       </div>
@@ -234,10 +260,26 @@
                 <button @click="refreshWeather" :disabled="isRefreshingWeather" class="text-sm text-blue-600">{{ isRefreshingWeather ? '更新中...' : '刷新' }}</button>
               </div>
               <div v-if="trip.weather?.length" class="space-y-3">
-                <div v-for="w in trip.weather" :key="w.date" class="flex justify-between items-center p-2 hover:bg-gray-50 rounded">
-                  <span class="text-sm text-gray-600">{{ formatDayDate(w.date) }}</span>
-                  <span>{{ getWeatherIcon(w.condition) }} {{ w.condition }}</span>
-                  <span class="font-medium text-gray-800">{{ w.low }}°~{{ w.high }}°</span>
+                <div
+                  v-for="w in trip.weather"
+                  :key="w.date"
+                  class="flex items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50/70 p-3 hover:bg-slate-50"
+                >
+                  <div class="min-w-[84px]">
+                    <div class="text-sm font-semibold text-slate-800">{{ formatMonthDay(w.date) }}</div>
+                    <div class="mt-1 text-xs text-slate-500">{{ formatDayDate(w.date) }}</div>
+                  </div>
+                  <div class="flex min-w-0 flex-1 items-center gap-3">
+                    <div class="text-2xl">{{ getWeatherIcon(w.dayCondition || w.condition) }}</div>
+                    <div class="min-w-0 text-xs leading-5 text-slate-600">
+                      <div>白天: {{ w.dayCondition || w.condition }}</div>
+                      <div>夜间: {{ w.nightCondition || w.condition }}</div>
+                    </div>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-sm font-semibold text-slate-900">{{ w.low }}°~{{ w.high }}°</div>
+                    <div class="mt-1 text-xs text-slate-500">{{ buildWindLabel(w) }}</div>
+                  </div>
                 </div>
               </div>
               <div v-if="weatherTips.length" class="mt-4 p-3 bg-amber-50 rounded text-sm text-amber-800">
@@ -343,6 +385,23 @@ const tripStore = useTripStore()
 // 获取 Store 中的数据
 const trip = computed(() => tripStore.currentTrip)
 const weatherCityLabel = computed(() => trip.value?.weather?.[0]?.city || trip.value?.destination || '当前目的地')
+const routeDaySummaries = computed(() =>
+  (trip.value?.days || []).map((day: any, index: number) => {
+    const activities = day.activities || []
+    const mappedStops = activities.filter((activity: any) => activity.coordinates?.lat && activity.coordinates?.lng).length
+    const scenic = activities.filter((activity: any) => isScenicLikeActivity(activity))
+    const title = day.theme || day.notes || scenic[0]?.location || scenic[0]?.title || `第 ${index + 1} 天路线`
+    const previewItems = scenic.length
+      ? scenic.slice(0, 3).map((item: any) => item.location || item.title)
+      : activities.slice(0, 3).map((item: any) => item.location || item.title)
+    return {
+      label: `Day ${index + 1}`,
+      title,
+      countLabel: mappedStops > 0 ? `${mappedStops} 个点位` : `${activities.length} 项安排`,
+      preview: previewItems.join(' → ') || '等待生成路线重点'
+    }
+  })
+)
 const mappedActivityCount = computed(() => {
   if (!trip.value?.days?.length) return 0
   return trip.value.days.reduce((sum: number, day: any) => {
@@ -362,16 +421,95 @@ const openAuth = (mode: 'login' | 'register') => {
 // ===== 行程与活动逻辑 =====
 const activeDayIndex = ref(0)
 const activeDay = computed(() => trip.value?.days?.[activeDayIndex.value])
-const textIncludesAny = (activity: Activity | any, keywords: string[]) => {
-  const text = [activity?.title, activity?.location, activity?.description, activity?.notes]
+const textIncludesAny = (activity: Activity | any, keywords: string[], fields: Array<'title' | 'location' | 'description' | 'notes'> = ['title', 'location', 'description', 'notes']) => {
+  const text = fields
+    .map((field) => activity?.[field])
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
   return keywords.some((keyword) => text.includes(keyword.toLowerCase()))
 }
 
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
+const renderMarkdownToHtml = (source: string) => {
+  const text = String(source || '').trim()
+  if (!text) {
+    return '<p>已生成行程，可在下方按天查看并编辑细节。</p>'
+  }
+
+  const lines = text.split('\n')
+  const blocks: string[] = []
+  let listItems: string[] = []
+  let paragraphLines: string[] = []
+
+  const flushList = () => {
+    if (!listItems.length) return
+    blocks.push(`<ul>${listItems.map((item) => `<li>${item}</li>`).join('')}</ul>`)
+    listItems = []
+  }
+
+  const flushParagraph = () => {
+    if (!paragraphLines.length) return
+    blocks.push(`<p>${paragraphLines.join('<br />')}</p>`)
+    paragraphLines = []
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      flushList()
+      flushParagraph()
+      continue
+    }
+
+    const escaped = escapeHtml(trimmed)
+    if (trimmed.startsWith('### ')) {
+      flushList()
+      flushParagraph()
+      blocks.push(`<h3>${escapeHtml(trimmed.slice(4))}</h3>`)
+      continue
+    }
+    if (trimmed.startsWith('## ')) {
+      flushList()
+      flushParagraph()
+      blocks.push(`<h2>${escapeHtml(trimmed.slice(3))}</h2>`)
+      continue
+    }
+    if (trimmed.startsWith('# ')) {
+      flushList()
+      flushParagraph()
+      blocks.push(`<h1>${escapeHtml(trimmed.slice(2))}</h1>`)
+      continue
+    }
+    if (trimmed.startsWith('- ')) {
+      flushParagraph()
+      listItems.push(escapeHtml(trimmed.slice(2)))
+      continue
+    }
+    flushList()
+    paragraphLines.push(escaped)
+  }
+
+  flushList()
+  flushParagraph()
+  return blocks.join('')
+}
+
+const renderedPlanHtml = computed(() => renderMarkdownToHtml(trip.value?.plan || ''))
+
 const isMealLikeActivity = (activity: Activity | any) => {
-  return activity?.type === 'food' || textIncludesAny(activity, ['饭店', '餐厅', '餐馆', '小吃', '早餐', '午餐', '晚餐', '咖啡', '面馆', '酒家'])
+  const mealInTitle = textIncludesAny(activity, ['饭店', '餐厅', '餐馆', '小吃', '早餐', '午餐', '晚餐', '咖啡', '面馆', '酒家', '火锅', '烧烤', '茶馆'], ['title'])
+  const mealInLocation = textIncludesAny(activity, ['饭店', '餐厅', '餐馆', '小吃', '咖啡', '面馆', '酒家', '火锅', '烧烤', '茶馆'], ['location'])
+  const scenicInTitle = textIncludesAny(activity, ['参观', '博物馆', '景区', '古镇', '公园', '展馆', '遗址', '街区'], ['title'])
+  if (scenicInTitle) return false
+  return activity?.type === 'food' || mealInTitle || mealInLocation
 }
 
 const isScenicLikeActivity = (activity: Activity | any) => {
@@ -392,6 +530,24 @@ const dayOtherActivities = computed(() =>
   (activeDay.value?.activities || []).filter((activity) => !isScenicLikeActivity(activity) && !isMealLikeActivity(activity))
 )
 const isEditingActivities = ref(false)
+
+const mealDisplayName = (activity: Activity | any) => {
+  const location = String(activity?.location || '').trim()
+  const title = String(activity?.title || '').trim()
+  if (location && location !== title) return location
+  return title.replace(/^\d{1,2}:\d{2}\s*[·\-]\s*/, '').replace(/（第\d+天）/g, '').trim() || '餐饮点'
+}
+
+const mealCuisineHint = (activity: Activity | any) => {
+  const text = [activity?.notes, activity?.description].filter(Boolean).join(' ')
+  const matches = text.match(/(?:招牌|推荐|必点|特色)[：:\s]*([^，。；]{2,20})/g)
+  if (!matches?.length) return ''
+  return matches
+    .map((item) => item.replace(/^(招牌|推荐|必点|特色)[：:\s]*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(' / ')
+}
 
 const showActivityModal = ref(false)
 const editingActivityIndex = ref(-1)
@@ -535,9 +691,15 @@ const refreshWeather = async () => {
         high: Number(item.temperature) + 3,
         low: Number(item.temperature) - 3,
         condition: item.condition || '晴朗',
+        dayCondition: item.day_condition || item.condition || '晴朗',
+        nightCondition: item.night_condition || item.condition || '晴朗',
         precipitation: 0,
         humidity: Number(item.humidity) || 60,
         windSpeed: Number(item.wind_speed) || 10,
+        dayWindDirection: item.day_wind_direction || '',
+        nightWindDirection: item.night_wind_direction || '',
+        dayWindPower: item.day_wind_power || '',
+        nightWindPower: item.night_wind_power || '',
         icon: item.icon
       }))
       // 通过 Store 更新状态，避免直接修改 computed 属性
@@ -612,6 +774,18 @@ const formatDayDate = (date: string) => {
   if (!date) return ''
   const d = new Date(date)
   return `周${['日','一','二','三','四','五','六'][d.getDay()]} ${d.getMonth() + 1}/${d.getDate()}`
+}
+const formatMonthDay = (date: string) => {
+  if (!date) return ''
+  const d = new Date(date)
+  return `${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+const buildWindLabel = (weather: any) => {
+  const dayDirection = weather?.dayWindDirection || weather?.nightWindDirection || ''
+  const dayPower = weather?.dayWindPower || weather?.nightWindPower || ''
+  if (dayDirection && dayPower) return `${dayDirection} ${dayPower}级`
+  return `${weather?.windSpeed || 0}级`
 }
 
 const exportToPDF = async () => {
@@ -709,3 +883,45 @@ onMounted(() => {
   }
 })
 </script>
+
+<style scoped>
+.trip-plan-content :deep(h1) {
+  margin: 0 0 1rem;
+  font-size: 1.9rem;
+  line-height: 1.2;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.trip-plan-content :deep(h2) {
+  margin: 1.75rem 0 0.9rem;
+  font-size: 1.2rem;
+  line-height: 1.4;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.trip-plan-content :deep(h3) {
+  margin: 1.25rem 0 0.7rem;
+  font-size: 1rem;
+  line-height: 1.5;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.trip-plan-content :deep(p) {
+  margin: 0.85rem 0;
+  color: #475569;
+}
+
+.trip-plan-content :deep(ul) {
+  margin: 0.8rem 0 1rem;
+  padding-left: 1.2rem;
+  color: #475569;
+  list-style: disc;
+}
+
+.trip-plan-content :deep(li) {
+  margin: 0.35rem 0;
+}
+</style>

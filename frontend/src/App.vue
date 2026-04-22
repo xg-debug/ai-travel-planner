@@ -9,17 +9,12 @@
       </main>
     </div>
 
-    <!-- 全局通知 -->
-    <TravelNotifications />
   </div>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import TravelNav from '@/components/TravelNav.vue'
-import TravelFooter from '@/components/TravelFooter.vue'
-import TravelNotifications from '@/components/TravelNotifications.vue'
 
 const route = useRoute()
 const isMapRoute = computed(() => route.path === '/map')

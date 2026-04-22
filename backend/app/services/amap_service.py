@@ -372,6 +372,8 @@ class AMapService:
                 result["forecast"].append({
                     "date": cast.get("date", ""),
                     "condition": self._translate_weather(cast.get("dayweather", "")),
+                    "day_condition": self._translate_weather(cast.get("dayweather", "")),
+                    "night_condition": self._translate_weather(cast.get("nightweather", "")),
                     "temperature": {
                         "min": _safe_int(cast.get("nighttemp"), 0),
                         "max": _safe_int(cast.get("daytemp"), 0),
@@ -379,6 +381,10 @@ class AMapService:
                     },
                     "humidity": _safe_int(cast.get("dayhumidity"), 60),
                     "wind_speed": _safe_int(cast.get("daypower"), 3),
+                    "day_wind_direction": cast.get("daywind", ""),
+                    "night_wind_direction": cast.get("nightwind", ""),
+                    "day_wind_power": cast.get("daypower", ""),
+                    "night_wind_power": cast.get("nightpower", ""),
                     "icon": self._get_weather_icon(cast.get("dayweather", ""))
                 })
         

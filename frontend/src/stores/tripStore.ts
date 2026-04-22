@@ -343,9 +343,15 @@ export const useTripStore = defineStore('trip', () => {
       high: forecast.temperature?.max || 25,
       low: forecast.temperature?.min || 15,
       condition: forecast.condition || '晴朗',
+      dayCondition: forecast.day_condition || forecast.condition || '晴朗',
+      nightCondition: forecast.night_condition || forecast.condition || '晴朗',
       precipitation: 0, // API可能不提供降水概率
       humidity: forecast.humidity || 60,
       windSpeed: forecast.wind_speed || 10,
+      dayWindDirection: forecast.day_wind_direction || '',
+      nightWindDirection: forecast.night_wind_direction || '',
+      dayWindPower: forecast.day_wind_power || '',
+      nightWindPower: forecast.night_wind_power || '',
       icon: forecast.icon
     }))
   }
@@ -551,12 +557,12 @@ export const useTripStore = defineStore('trip', () => {
 
   const normalizeTicketPrice = (activity: any, poi: any, type: Activity['type']): number | undefined => {
     const explicit = parseNumericPrice(activity.ticket_price ?? activity.ticketPrice)
-    if (explicit !== undefined) return explicit
+    if (explicit !== undefined) return ['food', 'transport'].includes(type) ? undefined : explicit
     const poiPrice = parseNumericPrice(poi?.price)
     if (poiPrice !== undefined && ['culture', 'outdoor', 'entertainment', 'other'].includes(type)) return poiPrice
-    if (type === 'food' || type === 'transport') return 0
+    if (type === 'food' || type === 'transport') return undefined
     if (Number(activity.cost_estimate ?? activity.cost) === 0) return 0
-    return ['culture', 'outdoor', 'entertainment', 'other'].includes(type) ? (parseNumericPrice(activity.cost_estimate ?? activity.cost) ?? undefined) : 0
+    return ['culture', 'outdoor', 'entertainment', 'other'].includes(type) ? (parseNumericPrice(activity.cost_estimate ?? activity.cost) ?? undefined) : undefined
   }
 
   const buildTicketLabel = (activity: any, poi: any, ticketPrice?: number): string | undefined => {

@@ -379,8 +379,14 @@ async def get_weather(city: str, days: int = 3):
                 date=forecast.get('date', ''),
                 temperature=forecast.get('temperature', {}).get('avg', 20),
                 condition=forecast.get('condition', '未知'),
+                day_condition=forecast.get('day_condition'),
+                night_condition=forecast.get('night_condition'),
                 humidity=forecast.get('humidity', 60),
                 wind_speed=forecast.get('wind_speed', 10),
+                day_wind_direction=forecast.get('day_wind_direction'),
+                night_wind_direction=forecast.get('night_wind_direction'),
+                day_wind_power=forecast.get('day_wind_power'),
+                night_wind_power=forecast.get('night_wind_power'),
                 icon=forecast.get('icon', 'unknown')
             )
             weather_list.append(weather_info)

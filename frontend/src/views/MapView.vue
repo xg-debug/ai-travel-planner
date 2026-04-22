@@ -24,9 +24,9 @@
 
         <div class="absolute right-5 top-5 z-20 flex items-start gap-3">
           <div class="rounded-2xl border border-slate-200/80 bg-white/92 px-4 py-3 shadow-sm backdrop-blur">
-            <div class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Route Overview</div>
-            <div class="mt-1 text-lg font-semibold text-slate-900">{{ tripTitle }}</div>
-            <div class="mt-2 text-sm text-slate-500">{{ routeSummary || fallbackSummary }}</div>
+            <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Route Overview</div>
+            <div class="mt-1 text-base font-semibold text-slate-900">{{ tripTitle }}</div>
+            <div class="mt-2 text-[13px] text-slate-500">{{ routeSummary || fallbackSummary }}</div>
           </div>
 
           <div class="flex flex-col gap-3">
@@ -68,18 +68,18 @@
           正在绘制路线总览...
         </div>
 
-        <div v-if="routeDays.length" class="absolute bottom-5 left-5 z-20 w-[320px] max-w-[calc(100vw-2.5rem)] rounded-[26px] border border-slate-200/80 bg-white/92 p-5 shadow-[0_16px_42px_rgba(15,23,42,0.14)] backdrop-blur">
+        <div v-if="routeDays.length" class="absolute bottom-5 left-5 z-20 w-[300px] max-w-[calc(100vw-2.5rem)] rounded-[24px] border border-slate-200/80 bg-white/92 p-4 shadow-[0_16px_42px_rgba(15,23,42,0.14)] backdrop-blur">
           <div class="mb-4">
-            <div class="text-[13px] font-semibold uppercase tracking-[0.18em] text-slate-400">Trip Route</div>
-            <div class="mt-1 text-[2rem] font-semibold leading-none text-slate-900">行程路线</div>
+            <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Trip Route</div>
+            <div class="mt-1 text-[1.55rem] font-semibold leading-none text-slate-900">行程路线</div>
           </div>
 
-          <div class="space-y-4">
+          <div class="space-y-3.5">
             <div v-for="day in routeDays" :key="`legend-${day.dayIndex}`" class="flex items-start gap-3">
-              <span class="mt-1 block h-1.5 w-10 rounded-full" :style="{ backgroundColor: day.color }"></span>
+              <span class="mt-[9px] block h-1.5 w-9 rounded-full" :style="{ backgroundColor: day.color }"></span>
               <div class="min-w-0">
-                <div class="text-lg font-semibold text-slate-900">Day {{ day.dayIndex + 1 }}: {{ day.legendTitle }}</div>
-                <div class="mt-1 text-sm text-slate-500">
+                <div class="text-[15px] font-semibold leading-6 text-slate-900">Day {{ day.dayIndex + 1 }}: {{ day.legendTitle }}</div>
+                <div class="mt-1 text-[12px] leading-5 text-slate-500">
                   {{ day.points[0]?.name }}
                   <span v-if="day.points.length > 1"> → {{ day.points[day.points.length - 1]?.name }}</span>
                 </div>
@@ -160,18 +160,50 @@ const validPosition = (value) => {
   return Number.isFinite(lat) && Number.isFinite(lng) && lat >= 3 && lat <= 54 && lng >= 73 && lng <= 136
 }
 
+const DAY_STOPWORDS = ['早餐', '午餐', '晚餐', '夜宵', '小吃', '咖啡', '本地特色', '开启行程', '酒店', '民宿', '客栈']
+
+const cleanLegendText = (value) =>
+  String(value || '')
+    .replace(/[（(]第\d+天[）)]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const isStopwordTitle = (value) => {
+  const text = cleanLegendText(value)
+  if (!text) return true
+  return DAY_STOPWORDS.some((keyword) => text.includes(keyword))
+}
+
 const buildLegendTitle = (day, dayIndex, points) => {
-  const notes = String(day.notes || '').trim()
-  if (notes) return notes.slice(0, 20)
-  const firstTitle = String(points[0]?.title || points[0]?.name || '').trim()
-  const firstLocation = String(points[0]?.name || '').trim()
-  if (firstTitle && firstTitle !== firstLocation) return firstTitle
-  if (points.length === 1) return firstLocation || `第 ${dayIndex + 1} 天`
-  const destination = tripStore.currentTrip?.destination || ''
-  if (firstLocation && destination && firstLocation.includes(destination)) {
-    return `${destination}城市漫游`
+  const destination = String(tripStore.currentTrip?.destination || '').trim()
+  const summary = cleanLegendText(day.summary)
+  const theme = cleanLegendText(day.theme)
+  const notes = cleanLegendText(day.notes)
+  const preferredText = [theme, summary, notes].find((item) => item && !isStopwordTitle(item))
+  if (preferredText) return preferredText.slice(0, 18)
+
+  const scenicPoint = points.find((point) => {
+    const title = cleanLegendText(point.title)
+    const name = cleanLegendText(point.name)
+    return point.type !== 'food' && !isStopwordTitle(title) && !isStopwordTitle(name)
+  })
+
+  if (scenicPoint) {
+    const scenicName = cleanLegendText(scenicPoint.name || scenicPoint.title)
+    if (scenicName) {
+      if (destination && scenicName.includes(destination)) return scenicName
+      if (destination && dayIndex === 0) return `${destination}市区游`
+      return scenicName.slice(0, 18)
+    }
   }
-  return firstLocation || `第 ${dayIndex + 1} 天`
+
+  const endPoint = points[points.length - 1]
+  const endName = cleanLegendText(endPoint?.name || endPoint?.title || '')
+  if (endName && !isStopwordTitle(endName)) {
+    return endName.slice(0, 18)
+  }
+
+  return destination ? `${destination}路线 Day ${dayIndex + 1}` : `第 ${dayIndex + 1} 天`
 }
 
 const routeDays = computed(() => {
@@ -396,6 +428,7 @@ const createPolyline = (path, color, zIndex) => {
     strokeOpacity: 0.96,
     lineJoin: 'round',
     lineCap: 'round',
+    showDir: true,
     zIndex: zIndex + 1,
     map: mapInstance.value,
   })

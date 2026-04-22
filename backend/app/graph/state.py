@@ -70,6 +70,12 @@ class WeatherInfo(BaseModel):
     date: str
     temperature: float
     condition: str
+    day_condition: Optional[str] = None
+    night_condition: Optional[str] = None
     humidity: float
     wind_speed: float
+    day_wind_direction: Optional[str] = None
+    night_wind_direction: Optional[str] = None
+    day_wind_power: Optional[str] = None
+    night_wind_power: Optional[str] = None
     icon: str

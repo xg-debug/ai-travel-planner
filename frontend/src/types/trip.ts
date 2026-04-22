@@ -55,9 +55,15 @@ export interface WeatherForecast {
   high: number
   low: number
   condition: string
+  dayCondition?: string
+  nightCondition?: string
   precipitation: number // percentage
   humidity: number // percentage
   windSpeed: number // km/h
+  dayWindDirection?: string
+  nightWindDirection?: string
+  dayWindPower?: string
+  nightWindPower?: string
   icon?: string
 }
 
@@ -139,6 +145,8 @@ export interface TripResponse {
     forecast: Array<{
       date: string
       condition: string
+      day_condition?: string
+      night_condition?: string
       temperature: {
         min: number
         max: number
@@ -146,6 +154,10 @@ export interface TripResponse {
       }
       humidity: number
       wind_speed: number
+      day_wind_direction?: string
+      night_wind_direction?: string
+      day_wind_power?: string
+      night_wind_power?: string
       icon: string
     }>
   }
