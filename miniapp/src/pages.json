@@ -1,0 +1,85 @@
+{
+  "pages": [
+    {
+      "path": "pages/plan/index",
+      "style": {
+        "navigationBarTitleText": "智能旅行规划",
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/generating/index",
+      "style": {
+        "navigationBarTitleText": "生成行程"
+      }
+    },
+    {
+      "path": "pages/trip-detail/index",
+      "style": {
+        "navigationBarTitleText": "行程详情"
+      }
+    },
+    {
+      "path": "pages/route-map/index",
+      "style": {
+        "navigationBarTitleText": "路线大图"
+      }
+    },
+    {
+      "path": "pages/day-detail/index",
+      "style": {
+        "navigationBarTitleText": "当日安排"
+      }
+    },
+    {
+      "path": "pages/place-detail/index",
+      "style": {
+        "navigationBarTitleText": "地点详情"
+      }
+    },
+    {
+      "path": "pages/trips/index",
+      "style": {
+        "navigationBarTitleText": "我的行程"
+      }
+    },
+    {
+      "path": "pages/profile/index",
+      "style": {
+        "navigationBarTitleText": "我的"
+      }
+    },
+    {
+      "path": "pages/auth/index",
+      "style": {
+        "navigationBarTitleText": "登录注册"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "AI Travel Planner",
+    "navigationBarBackgroundColor": "#F6F8FB",
+    "backgroundColor": "#F6F8FB"
+  },
+  "tabBar": {
+    "color": "#7B8798",
+    "selectedColor": "#1769E0",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/plan/index",
+        "text": "规划"
+      },
+      {
+        "pagePath": "pages/trips/index",
+        "text": "行程"
+      },
+      {
+        "pagePath": "pages/profile/index",
+        "text": "我的"
+      }
+    ]
+  }
+}

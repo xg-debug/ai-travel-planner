@@ -1,8 +1,13 @@
 import re
 from typing import Any, Dict, List
 
-from app.agents.city_knowledge import has_branch_marker, score_food_locality
-from app.agents.shared import build_recommendation_from_candidates, dedupe, normalize_search_query, score_general_candidate
+from app.agents.shared import (
+    build_recommendation_from_candidates,
+    dedupe,
+    filter_real_candidates,
+    normalize_search_query,
+    score_general_candidate,
+)
 from app.agents.workers.base_react_agent import BaseReActAgent
 from app.orchestration.task_models import build_task_result
 from app.orchestration.task_router import complete_task, get_ready_task_for_step
@@ -20,14 +25,39 @@ class FoodReActAgent(BaseReActAgent):
         variants.extend([f"{city}早餐", f"{city}本地小吃", f"{city}特色餐厅"])
         return dedupe(variants)
 
+    def _score_food_candidate(self, item: Dict[str, Any], city: str, query: str) -> float:
+        score = score_general_candidate(item, city, query, hotel=False)
+        name = str(item.get("name", "")).strip()
+        type_text = str(item.get("type", "")).strip()
+        address = str(item.get("address", "")).strip()
+        opening_hours = str(item.get("opening_hours", "")).strip()
+        searchable = f"{name} {type_text} {address}".lower()
+        query_text = str(query or "").strip().lower()
+
+        food_markers = ("餐饮", "餐厅", "小吃", "早餐", "面馆", "饭店", "食府", "夜市", "咖啡", "茶馆")
+        local_markers = ("本地", "特色", "老字号", "必吃", "人气", "传统", "风味")
+        chain_markers = ("旗舰店", "分店", "连锁", "店")
+
+        if any(marker in searchable for marker in food_markers):
+            score += 1.5
+        if any(marker in searchable for marker in local_markers):
+            score += 0.8
+        if "早餐" in query_text and any(marker in searchable for marker in ("早餐", "早茶", "面馆", "包子", "粥")):
+            score += 1.0
+        if "夜" in query_text and any(marker in searchable for marker in ("夜市", "酒吧", "烧烤", "步行街")):
+            score += 1.0
+        if opening_hours:
+            score += 0.3
+        if any(marker in name for marker in chain_markers):
+            score -= 0.4
+        return score
+
     def _rank_results(self, raw_results: List[Dict[str, Any]], state: Dict[str, Any], query: str) -> List[Dict[str, Any]]:
         city = state["city"]
         ranked: List[Dict[str, Any]] = []
         for item in raw_results:
             next_item = dict(item)
-            searchable = f"{next_item.get('name', '')} {next_item.get('type', '')} {next_item.get('address', '')}"
-            bonus = score_food_locality(searchable, city, query)
-            next_item["_react_score"] = score_general_candidate(next_item, city, query, hotel=False) + bonus + 2.5
+            next_item["_react_score"] = self._score_food_candidate(next_item, city, query)
             ranked.append(next_item)
         ranked.sort(key=lambda item: float(item.get("_react_score", 0)), reverse=True)
         return ranked
@@ -52,7 +82,7 @@ def _dedupe_food_candidates(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
             continue
         brand_key = _normalize_food_brand(name)
         current = best_by_brand.get(brand_key)
-        score = float(item.get("rating", 0) or 0) - (0.6 if has_branch_marker(name) else 0)
+        score = float(item.get("_react_score", item.get("rating", 0)) or 0)
         if not current or score > float(current.get("_food_brand_score", -999)):
             next_item = dict(item)
             next_item["_food_brand_score"] = score
@@ -70,7 +100,7 @@ def food_search_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     task_inputs = task.get("inputs", {}) if task else {}
     queries = task_inputs.get("queries") or [f"{city}本地特色早餐", f"{city}高评分特色餐厅", f"{city}夜市步行街"]
     react_result = food_react_agent.run(state, queries, task=task)
-    candidates = _dedupe_food_candidates(react_result["items"])
+    candidates = _dedupe_food_candidates(filter_real_candidates(react_result["items"]))
     recommendations = list(state.get("recommendations", []) or [])
     if candidates:
         recommendations.append(

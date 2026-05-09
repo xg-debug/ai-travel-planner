@@ -1,219 +1,296 @@
 import logging
-from typing import List, Dict, Any, Optional
-from app.core.llm import recommendation_llm
-from app.core.config import settings
-import json
+from typing import Any, Dict, List, Optional
+
+from app.domain import travel_domain_service
+
 
 logger = logging.getLogger(__name__)
 
+
 class RecommendationService:
-    """个性化推荐服务"""
-    
-    def __init__(self):
-        self.recommendation_categories = {
-            "culture": ["博物馆", "历史遗迹", "艺术馆", "文化街区"],
-            "food": ["特色餐厅", "小吃街", "美食市场", "咖啡馆"],
-            "nature": ["公园", "山景", "湖景", "海滩"],
-            "shopping": ["商场", "市场", "特色店铺", "免税店"],
-            "adventure": ["徒步路线", "水上活动", "极限运动", "探险项目"],
-            "relax": ["温泉", "SPA", "瑜伽馆", "休闲公园"],
-            "family": ["儿童乐园", "动物园", "科技馆", "亲子活动"],
-            "photography": ["观景台", "网红打卡点", "夜景", "特色建筑"]
-        }
-    
+    """
+    Real recommendation service.
+
+    Data is derived only from real provider results:
+    - POI search
+    - restaurant-like POI search
+    - hotel search
+    """
+
+    DEFAULT_PREFERENCES = ["culture", "food", "nature"]
+
+    QUERY_PRESETS: Dict[str, Dict[str, Any]] = {
+        "culture": {
+            "type": "文化",
+            "title": "文化景点推荐",
+            "queries": ["博物馆", "历史街区", "文化地标"],
+            "best_time": "上午到下午",
+            "price_range": "免费-中等",
+            "tips": "优先查看开放时间和预约要求。",
+            "source": "poi",
+        },
+        "food": {
+            "type": "美食",
+            "title": "本地餐饮推荐",
+            "queries": ["本地特色餐厅", "老字号", "小吃"],
+            "best_time": "午餐和晚餐",
+            "price_range": "中等",
+            "tips": "建议错峰用餐，并优先选择评分较高的餐饮点。",
+            "source": "poi",
+        },
+        "nature": {
+            "type": "自然",
+            "title": "自然风景推荐",
+            "queries": ["城市公园", "风景区", "湖景公园"],
+            "best_time": "上午",
+            "price_range": "免费-中等",
+            "tips": "注意天气变化，户外行程建议避开极端天气。",
+            "source": "poi",
+        },
+        "shopping": {
+            "type": "购物",
+            "title": "购物休闲推荐",
+            "queries": ["商圈", "步行街", "特色市场"],
+            "best_time": "下午到晚间",
+            "price_range": "各种价位",
+            "tips": "建议优先选择交通方便、可步行串联的区域。",
+            "source": "poi",
+        },
+        "photography": {
+            "type": "摄影",
+            "title": "拍照打卡推荐",
+            "queries": ["观景台", "夜景地标", "特色建筑"],
+            "best_time": "傍晚到夜间",
+            "price_range": "免费-中等",
+            "tips": "建议结合日落或夜景时段前往。",
+            "source": "poi",
+        },
+        "family": {
+            "type": "亲子",
+            "title": "亲子游玩推荐",
+            "queries": ["动物园", "科技馆", "儿童乐园"],
+            "best_time": "白天",
+            "price_range": "中等",
+            "tips": "建议优先选择步行压力较小、停留时间灵活的地点。",
+            "source": "poi",
+        },
+        "hotel": {
+            "type": "酒店",
+            "title": "住宿推荐",
+            "queries": ["市中心酒店", "高评分酒店", "交通便利酒店"],
+            "best_time": "全天",
+            "price_range": "",
+            "tips": "建议结合预算和行程中心区选择住宿。",
+            "source": "hotel",
+        },
+    }
+
+    PREFERENCE_ALIASES = {
+        "culture": "culture",
+        "food": "food",
+        "nature": "nature",
+        "shopping": "shopping",
+        "photography": "photography",
+        "family": "family",
+        "hotel": "hotel",
+        "住宿": "hotel",
+        "酒店": "hotel",
+        "文化": "culture",
+        "人文": "culture",
+        "历史": "culture",
+        "美食": "food",
+        "餐饮": "food",
+        "自然": "nature",
+        "户外": "nature",
+        "购物": "shopping",
+        "拍照": "photography",
+        "摄影": "photography",
+        "亲子": "family",
+    }
+
     def get_recommendations(
-        self, 
-        city: str, 
-        preferences: List[str], 
-        plan: Optional[List[Dict[str, Any]]] = None
+        self,
+        city: str,
+        preferences: List[str],
+        plan: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
-        """
-        获取个性化推荐
-        
-        Args:
-            city: 城市名称
-            preferences: 用户偏好列表
-            plan: 现有行程计划
-            
-        Returns:
-            推荐列表
-        """
-        logger.info(f"Getting recommendations for {city} with preferences: {preferences}")
+        logger.info("Getting real recommendations for city=%s preferences=%s", city, preferences)
+        normalized_preferences = self._normalize_preferences(preferences)
+        recommendations: List[Dict[str, Any]] = []
 
-        # 默认走规则推荐，避免额外 LLM 延迟；需要时可通过环境变量开启 LLM 推荐增强。
-        if not settings.ENABLE_LLM_RECOMMENDATION:
-            return self._get_rule_based_recommendations(city, preferences, plan)
+        for pref in normalized_preferences:
+            preset = self.QUERY_PRESETS.get(pref)
+            if not preset:
+                continue
 
-        try:
-            # 使用LLM生成智能推荐
-            prompt = self._build_recommendation_prompt(city, preferences, plan)
-            response = recommendation_llm.invoke(prompt)
-            
-            try:
-                recommendations = json.loads(response.content)
-                if isinstance(recommendations, list):
-                    return recommendations
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse LLM response as JSON, using fallback")
-            
-            # 回退到基于规则的推荐
-            return self._get_rule_based_recommendations(city, preferences, plan)
-            
-        except Exception as e:
-            logger.error(f"Error getting recommendations: {e}")
-            return self._get_fallback_recommendations(city, preferences)
-    
-    def _build_recommendation_prompt(
-        self, 
-        city: str, 
-        preferences: List[str], 
-        plan: Optional[List[Dict[str, Any]]]
-    ) -> str:
-        """构建推荐提示词"""
-        plan_text = ""
+            candidates = self._search_candidates(city, preset)
+            if not candidates:
+                logger.info("No real candidates found for city=%s pref=%s", city, pref)
+                continue
+
+            unique_candidates = self._dedupe_candidates(candidates)
+            items = [item["name"] for item in unique_candidates[:5] if item.get("name")]
+            if not items:
+                continue
+
+            recommendations.append(
+                {
+                    "type": preset["type"],
+                    "title": f"{city}{preset['title']}",
+                    "items": items,
+                    "description": self._build_description(city, preset["type"], unique_candidates[:3]),
+                    "reasoning": self._build_reasoning(unique_candidates[:3]),
+                    "best_time": preset["best_time"],
+                    "price_range": self._build_price_range(unique_candidates[:3], preset["price_range"]),
+                    "tips": preset["tips"],
+                }
+            )
+
         if plan:
-            plan_text = "现有行程计划：\n"
-            for day in plan[:3]:  # 只取前3天作为参考
-                plan_text += f"第{day.get('day', 1)}天："
-                activities = day.get('activities', [])
-                if activities:
-                    plan_text += f"{activities[0].get('title', '')}等{len(activities)}个活动\n"
-                else:
-                    plan_text += "暂无安排\n"
-        
-        prompt = f"""
-        你是一个旅行推荐专家，请为前往{city}的旅行者提供个性化推荐。
-        
-        旅行者偏好：{', '.join(preferences) if preferences else '无特殊偏好'}
-        
-        {plan_text}
-        
-        请根据以下要求生成推荐：
-        1. 针对每个偏好类别，推荐2-3个具体地点或活动
-        2. 每个推荐包含：名称、类型、简要描述、推荐理由
-        3. 考虑地点的评分、价格、适合时间等因素
-        4. 避免与现有行程重复（如果提供了行程）
-        5. 提供实用建议和小贴士
-        
-        输出格式为JSON数组：
-        [
-            {{
-                "type": "推荐类别",
-                "title": "推荐标题",
-                "items": ["地点1", "地点2", "地点3"],
-                "description": "推荐描述",
-                "reasoning": "推荐理由",
-                "best_time": "最佳时间",
-                "price_range": "价格范围",
-                "tips": "实用建议"
-            }}
-        ]
-        
-        请确保推荐内容实用、具体，符合旅行者的偏好。
-        """
-        
-        return prompt
-    
-    def _get_rule_based_recommendations(
-        self, 
-        city: str, 
-        preferences: List[str], 
-        plan: Optional[List[Dict[str, Any]]]
-    ) -> List[Dict[str, Any]]:
-        """基于规则的推荐"""
-        recommendations = []
-        
-        # 如果没有偏好，提供通用推荐
-        if not preferences:
-            preferences = ["culture", "food", "nature"]
-        
-        for pref in preferences[:3]:  # 最多3个偏好类别
-            categories = self.recommendation_categories.get(pref, ["景点"])
-            
-            recommendation = {
-                "type": self._translate_preference(pref),
-                "title": f"{city}{self._translate_preference(pref)}推荐",
-                "items": [f"{city}{cat}" for cat in categories[:3]],
-                "description": f"基于您的{self._translate_preference(pref)}偏好，我们推荐以下地点",
-                "reasoning": "这些地点评分高，符合您的偏好，且交通便利",
-                "best_time": "全天" if pref in ["shopping", "food"] else "上午",
-                "price_range": "免费-中等" if pref in ["nature", "culture"] else "中等-高端",
-                "tips": self._get_recommendation_tips(pref)
-            }
-            recommendations.append(recommendation)
-        
-        return recommendations
-    
-    def _get_fallback_recommendations(self, city: str, preferences: List[str]) -> List[Dict[str, Any]]:
-        """回退推荐（当所有方法都失败时）"""
-        return [
-            {
-                "type": "美食",
-                "title": f"{city}美食推荐",
-                "items": [f"{city}特色餐厅", f"{city}小吃街", f"{city}美食市场"],
-                "description": "品尝当地特色美食是旅行的重要部分",
-                "reasoning": "这些地点提供正宗当地美食，评分较高",
-                "best_time": "午餐和晚餐时间",
-                "price_range": "中等",
-                "tips": "建议尝试当地特色菜，注意餐厅营业时间"
-            },
-            {
-                "type": "文化",
-                "title": f"{city}文化体验",
-                "items": [f"{city}博物馆", f"{city}历史遗迹", f"{city}艺术馆"],
-                "description": "了解当地文化和历史",
-                "reasoning": "这些地点展示当地文化特色，具有教育意义",
-                "best_time": "上午",
-                "price_range": "免费-中等",
-                "tips": "部分场馆需要提前预约，注意开放时间"
-            },
-            {
-                "type": "购物",
-                "title": f"{city}购物推荐",
-                "items": [f"{city}商场", f"{city}特色市场", f"{city}商业街"],
-                "description": "购买纪念品和当地特产",
-                "reasoning": "这些地点商品丰富，价格合理",
-                "best_time": "下午",
-                "price_range": "各种价位",
-                "tips": "可以适当讲价，注意商品质量"
-            }
-        ]
-    
-    def _translate_preference(self, pref: str) -> str:
-        """翻译偏好类别"""
-        translations = {
-            "culture": "文化",
-            "food": "美食",
-            "nature": "自然",
-            "shopping": "购物",
-            "adventure": "探险",
-            "relax": "休闲",
-            "family": "亲子",
-            "photography": "摄影"
-        }
-        return translations.get(pref, pref)
-    
-    def _get_recommendation_tips(self, pref: str) -> str:
-        """获取推荐小贴士"""
-        tips = {
-            "culture": "建议提前了解历史文化背景，穿着舒适的鞋子",
-            "food": "尝试当地特色菜，注意食物卫生",
-            "nature": "注意天气变化，准备合适的装备",
-            "shopping": "比较价格，注意商品真伪",
-            "adventure": "注意安全，遵守相关规定",
-            "relax": "提前预约，注意营业时间",
-            "family": "选择适合儿童的活动，注意安全",
-            "photography": "选择合适的光线时间，注意拍摄规定"
-        }
-        return tips.get(pref, "请提前查询最新信息")
+            derived = self._derive_from_plan(plan)
+            for item in derived:
+                if not any(existing["type"] == item["type"] for existing in recommendations):
+                    recommendations.append(item)
 
-# 创建服务实例
+        return recommendations
+
+    def _normalize_preferences(self, preferences: List[str]) -> List[str]:
+        normalized: List[str] = []
+        raw_list = preferences or self.DEFAULT_PREFERENCES
+        for item in raw_list:
+            text = str(item or "").strip().lower()
+            if not text:
+                continue
+            mapped = self.PREFERENCE_ALIASES.get(text, text)
+            if mapped not in normalized and mapped in self.QUERY_PRESETS:
+                normalized.append(mapped)
+
+        if not normalized:
+            normalized = list(self.DEFAULT_PREFERENCES)
+
+        if "hotel" not in normalized:
+            normalized.append("hotel")
+        return normalized[:4]
+
+    def _search_candidates(self, city: str, preset: Dict[str, Any]) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        for query in preset["queries"]:
+            try:
+                if preset["source"] == "hotel":
+                    items = travel_domain_service.search_hotels(query, city, 1, 8)
+                else:
+                    items = travel_domain_service.search_pois(query, city, 1, 8)
+                results.extend(items or [])
+            except Exception as exc:
+                logger.warning("Recommendation search failed city=%s query=%s error=%s", city, query, exc)
+        return results
+
+    def _dedupe_candidates(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        best_by_name: Dict[str, Dict[str, Any]] = {}
+        for item in items:
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            current = best_by_name.get(name)
+            if not current or self._score(item) > self._score(current):
+                best_by_name[name] = item
+        return sorted(best_by_name.values(), key=self._score, reverse=True)
+
+    def _score(self, item: Dict[str, Any]) -> float:
+        rating = float(item.get("rating", 0) or 0)
+        bonus = 0.0
+        if item.get("image_url"):
+            bonus += 0.4
+        if item.get("address"):
+            bonus += 0.2
+        price = str(item.get("price", "")).strip()
+        if price:
+            bonus += 0.1
+        return rating + bonus
+
+    def _build_description(self, city: str, category: str, items: List[Dict[str, Any]]) -> str:
+        names = [str(item.get("name", "")).strip() for item in items if item.get("name")]
+        if not names:
+            return f"基于真实搜索结果整理出的{category}推荐。"
+        return f"基于{city}的真实搜索结果，优先筛出了 {', '.join(names[:3])} 等更值得优先考虑的{category}地点。"
+
+    def _build_reasoning(self, items: List[Dict[str, Any]]) -> str:
+        parts = []
+        for item in items:
+            name = str(item.get("name", "")).strip()
+            rating = item.get("rating")
+            address = str(item.get("address", "")).strip()
+            if not name:
+                continue
+            detail = name
+            if rating:
+                detail += f" 评分约 {rating}"
+            if address:
+                detail += f"，位于 {address}"
+            parts.append(detail)
+        return "；".join(parts) if parts else "基于真实查询结果筛选。"
+
+    def _build_price_range(self, items: List[Dict[str, Any]], default: str) -> str:
+        prices = [str(item.get("price", "")).strip() for item in items if str(item.get("price", "")).strip()]
+        meaningful = [price for price in prices if price]
+        if meaningful:
+            return " / ".join(meaningful[:2])
+        return default
+
+    def _derive_from_plan(self, plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        grouped: Dict[str, List[str]] = {
+            "景点": [],
+            "餐饮": [],
+            "酒店": [],
+        }
+
+        for day in plan:
+            hotel = day.get("hotel_recommendation") or day.get("hotel") or {}
+            hotel_name = str(hotel.get("name", "")).strip()
+            if hotel_name and hotel_name not in grouped["酒店"]:
+                grouped["酒店"].append(hotel_name)
+
+            for activity in day.get("activities", []) or []:
+                name = str(activity.get("location") or activity.get("title") or "").strip()
+                if not name:
+                    continue
+                text = " ".join(
+                    [
+                        str(activity.get("title", "")),
+                        str(activity.get("type", "")),
+                        str(activity.get("description", "")),
+                        str(activity.get("location", "")),
+                    ]
+                )
+                bucket = "餐饮" if any(token in text for token in ("早餐", "午餐", "晚餐", "餐", "美食", "小吃", "咖啡")) else "景点"
+                if name not in grouped[bucket]:
+                    grouped[bucket].append(name)
+
+        recommendations: List[Dict[str, Any]] = []
+        for category, items in grouped.items():
+            if not items:
+                continue
+            recommendations.append(
+                {
+                    "type": category,
+                    "title": f"{category}推荐",
+                    "items": items[:5],
+                    "description": f"基于当前真实行程整理出的{category}候选。",
+                    "reasoning": "仅保留当前行程中已经出现的真实地点，不生成虚构推荐。",
+                    "best_time": "",
+                    "price_range": "",
+                    "tips": "",
+                }
+            )
+        return recommendations
+
+
 recommendation_service = RecommendationService()
 
-# 导出函数
+
 def get_recommendations(
-    city: str, 
-    preferences: List[str], 
-    plan: Optional[List[Dict[str, Any]]] = None
+    city: str,
+    preferences: List[str],
+    plan: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     return recommendation_service.get_recommendations(city, preferences, plan)

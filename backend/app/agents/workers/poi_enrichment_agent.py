@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 from app.agents.shared import (
     build_image_queries,
     build_poi_queries,
+    candidate_has_real_source,
     enrich_activity_with_poi,
     pick_best_poi,
     select_state_candidate_for_activity,
@@ -112,7 +113,7 @@ class PoiExecutionAgent(BaseTaskExecutionAgent):
                     return next_context
                 selected_poi = pick_best_poi(candidates, activity, city, used_poi_names)
             pending["candidates"] = candidates
-            pending["poi_selected"] = selected_poi
+            pending["poi_selected"] = selected_poi if selected_poi and candidate_has_real_source(selected_poi) else None
             if selected_poi:
                 enriched = enrich_activity_with_poi(activity, selected_poi, city)
                 pending["activity"] = enriched

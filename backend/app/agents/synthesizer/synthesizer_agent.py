@@ -1,110 +1,219 @@
 import logging
-from typing import Any, Dict
+from datetime import datetime, timedelta
+from typing import Any, Dict, List
 
-from app.agents.schemas import ItineraryDayModel
-from app.agents.shared import build_fallback_itinerary, extract_itinerary_data, extract_json_block, normalize_itinerary
-from app.core.config import settings
-from app.core.llm import invoke_llm_with_fallback
+from app.agents.shared import build_source_metadata, filter_real_candidates, normalize_itinerary
 from app.orchestration.task_models import build_task_result
 from app.orchestration.task_router import complete_task, get_ready_task_for_step
+from app.tools.amap_tools import search_hotels_tool, search_pois_tool
 
 logger = logging.getLogger(__name__)
 
 
+def _dedupe_candidates(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    seen: set[str] = set()
+    result: List[Dict[str, Any]] = []
+    for item in items:
+        name = str(item.get("name", "")).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        result.append(item)
+    return result
+
+
+def _pop_next_unique(pool: List[Dict[str, Any]], used_names: set[str]) -> Dict[str, Any] | None:
+    for index, item in enumerate(pool):
+        name = str(item.get("name", "")).strip()
+        if not name or name in used_names:
+            continue
+        used_names.add(name)
+        return pool.pop(index)
+    return None
+
+
+def _supplement_real_candidates(
+    current_items: List[Dict[str, Any]],
+    *,
+    city: str,
+    queries: List[str],
+    search_fn,
+    min_count: int,
+    allow_sources=None,
+) -> List[Dict[str, Any]]:
+    items = _dedupe_candidates(filter_real_candidates(current_items, allow_sources=allow_sources))
+    if len(items) >= min_count:
+        return items
+
+    for query in queries:
+        try:
+            fetched = search_fn(query, city, 8)
+        except Exception as exc:
+            logger.warning("Supplement search failed city=%s query=%s error=%s", city, query, exc)
+            continue
+        merged = items + filter_real_candidates(fetched or [], allow_sources=allow_sources)
+        items = _dedupe_candidates(merged)
+        if len(items) >= min_count:
+            break
+    return items
+
+
+def _build_activity(candidate: Dict[str, Any], time_text: str, title_suffix: str, activity_type: str) -> Dict[str, Any]:
+    name = str(candidate.get("name", "")).strip()
+    address = str(candidate.get("address", "")).strip()
+    opening_hours = str(candidate.get("opening_hours", "")).strip()
+    description_parts = [str(candidate.get("description", "")).strip(), address, opening_hours]
+    description = "；".join([part for part in description_parts if part][:3])
+    activity = {
+        "time": time_text,
+        "title": f"{name}{title_suffix}".strip(),
+        "description": description,
+        "type": activity_type,
+        "location": name,
+        "duration": 90,
+        "cost_estimate": 0,
+        "ticket_price": 0,
+        "tips": str(candidate.get("tips", "")).strip(),
+        "transportation": "步行/公共交通/网约车",
+        "image": candidate.get("image_url"),
+    }
+    activity.update(build_source_metadata(candidate))
+    return activity
+
+
+def _build_day_summary(activities: List[Dict[str, Any]], hotel: Dict[str, Any] | None) -> str:
+    names: List[str] = []
+    seen: set[str] = set()
+    for activity in activities:
+        name = str(activity.get("location", "")).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+        if len(names) >= 3:
+            break
+    hotel_name = str((hotel or {}).get("name", "")).strip()
+    summary = " - ".join([name for name in names if name])
+    if hotel_name:
+        summary += f"；入住 {hotel_name}" if summary else f"入住 {hotel_name}"
+    return summary
+
+
+def _parse_date(start_date: str | None, index: int) -> str | None:
+    if not start_date:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return (datetime.strptime(start_date, fmt).date() + timedelta(days=index)).isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _build_real_itinerary(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    days = int(state["days"])
+    city = state["city"]
+    attractions = _supplement_real_candidates(
+        list(state.get("attraction_candidates", []) or []),
+        city=city,
+        queries=[f"{city}热门景点", f"{city}城市地标", f"{city}博物馆", f"{city}历史街区"],
+        search_fn=search_pois_tool,
+        min_count=2,
+    )
+    foods = _supplement_real_candidates(
+        list(state.get("food_candidates", []) or []),
+        city=city,
+        queries=[f"{city}本地特色早餐", f"{city}高评分特色餐厅", f"{city}老字号美食", f"{city}夜市步行街"],
+        search_fn=search_pois_tool,
+        min_count=2,
+    )
+    hotels = _supplement_real_candidates(
+        list(state.get("hotel_options", []) or []),
+        city=city,
+        queries=[f"{city}市中心酒店", f"{city}交通便利酒店", f"{city}高评分酒店"],
+        search_fn=search_hotels_tool,
+        min_count=1,
+        allow_sources={"hotel", "agentichotel", "geo", "amap"},
+    )
+
+    if len(attractions) < 2:
+        raise RuntimeError("真实景点候选不足，无法生成可信行程")
+    if len(foods) < 2:
+        raise RuntimeError("真实餐饮候选不足，无法生成可信行程")
+    if not hotels:
+        raise RuntimeError("真实酒店候选为空，无法生成可信行程")
+
+    itinerary: List[Dict[str, Any]] = []
+    remaining_attractions = list(attractions)
+    remaining_foods = list(foods)
+    used_attraction_names: set[str] = set()
+
+    for index in range(days):
+        breakfast = foods[index % len(foods)]
+        lunch = foods[(index + 1) % len(foods)]
+        morning = _pop_next_unique(remaining_attractions, used_attraction_names)
+        afternoon = _pop_next_unique(remaining_attractions, used_attraction_names)
+        evening_attraction = _pop_next_unique(remaining_attractions, used_attraction_names)
+        fallback_food = remaining_foods[(index + 2) % len(remaining_foods)] if remaining_foods else foods[(index + 2) % len(foods)]
+        evening = evening_attraction or fallback_food
+        hotel = hotels[index % len(hotels)]
+        evening_is_attraction = bool(evening_attraction)
+
+        activities = [_build_activity(breakfast, "08:00-09:00", "早餐", "美食餐饮")]
+        if morning:
+            activities.append(_build_activity(morning, "09:30-11:30", "", "景点游览"))
+        activities.append(_build_activity(lunch, "12:00-13:30", "午餐", "美食餐饮"))
+        if afternoon:
+            activities.append(_build_activity(afternoon, "14:00-17:00", "", "景点游览"))
+        if evening:
+            activities.append(
+                _build_activity(
+                    evening,
+                    "18:00-20:00",
+                    "晚间安排" if evening_is_attraction else "晚餐",
+                    "休闲体验" if evening_is_attraction else "美食餐饮",
+                )
+            )
+
+        itinerary.append(
+            {
+                "day": index + 1,
+                "date": _parse_date(state.get("start_date"), index),
+                "theme": f"{state['city']}真实地点串联游",
+                "summary": _build_day_summary(activities, hotel),
+                "hotel_recommendation": {
+                    "name": hotel.get("name", ""),
+                    "price_estimate": hotel.get("price"),
+                    "address": hotel.get("address", ""),
+                    "reason": "基于真实酒店搜索结果选择的住宿候选。",
+                    "source": hotel.get("source", ""),
+                    "source_id": hotel.get("id", ""),
+                },
+                "activities": activities,
+            }
+        )
+    return itinerary
+
+
 def synthesizer_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info("Synthesizing itinerary for %s (%s days)", state["city"], state["days"])
-    city = state["city"]
-    preferences_text = ", ".join(state.get("preferences", [])) if state.get("preferences") else "无特殊偏好"
-    budget_level = state.get("budget", "中等")
-    travelers = state.get("travelers", 1)
-    query_plan = state.get("query_plan", {})
     task = get_ready_task_for_step(state, "synthesizer_agent")
-    task_inputs = task.get("inputs", {}) if task else {}
-    attraction_candidates = state.get("attraction_candidates", [])[:8]
-    food_candidates = state.get("food_candidates", [])[:6]
-    hotel_options = state.get("hotel_options", [])[:3]
-    transport_plan = state.get("transport_plan", {}) or {}
-    reflection_context = state.get("reflection_context", {}) or {}
-    attraction_text = "、".join([item.get("name", "") for item in attraction_candidates if item.get("name")]) or "请自行规划真实地点"
-    food_text = "、".join([item.get("name", "") for item in food_candidates if item.get("name")]) or "请优先安排本地特色餐饮"
-    hotel_text = "、".join([item.get("name", "") for item in hotel_options if item.get("name")]) or "可不指定酒店"
-    rerun_hint = ""
-    if reflection_context.get("action") == "rerun_synthesizer":
-        rerun_hint = f"""
-你正在根据上一轮 reflection 结果重写 itinerary。
-上一轮问题摘要：{reflection_context.get('summary', '')}
-必须优先修复的问题：{reflection_context.get('issues', [])[:6]}
-请不要重复上一轮中被标记的问题地点或节奏安排。
-"""
+    if not task:
+        raise RuntimeError("synthesizer 任务未就绪")
 
-    prompt = f"""
-你是旅行行程 synthesizer agent。请为{travelers}位旅行者生成{city} {state['days']}天行程。
-预算：{budget_level}
-偏好：{preferences_text}
-需求：{state['query']}
-规划重点：{task_inputs.get('planning_focus') or query_plan.get('planning_focus', '')}
-景点候选：{attraction_text}
-餐饮候选：{food_text}
-酒店候选：{hotel_text}
-动线摘要：{transport_plan.get('summary', '')}
-{rerun_hint}
-
-要求：
-1. 每天 5-6 个活动，时间从早到晚。
-2. 每天必须同时覆盖景点、餐饮、休闲。
-3. 早餐、午餐或晚餐尽量优先使用餐饮候选中的真实地点。
-4. 优先围绕更顺路的地点生成，减少来回折返。
-5. 每天都要有一个推荐酒店，并尽量从酒店候选里选择。
-6. 使用真实地点，不要使用占位词。
-
-只返回 JSON 数组，格式与既有 itinerary 一致。
-"""
-
-    try:
-        response = invoke_llm_with_fallback(
-            prompt,
-            temperature=0.6,
-            max_tokens=1800,
-            request_timeout=45,
-            max_retries=1,
-            provider_order=[state.get("provider", settings.DEFAULT_LLM_PROVIDER), "deepseek", "openai", "anthropic", "google"],
-        )
-        content = response.content if isinstance(response.content, str) else str(response.content)
-        itinerary = extract_itinerary_data(extract_json_block(content))
-        if not itinerary:
-            raise ValueError("synthesizer agent 返回 itinerary 无效")
-        itinerary = [ItineraryDayModel.model_validate(day).model_dump() for day in itinerary]
-        itinerary = normalize_itinerary(itinerary, state)
-        return {
-            "draft_plan": itinerary,
-            "plan": itinerary,
-            "reflection_context": {},
-            **complete_task(
-                state,
-                "synthesizer_agent",
-                build_task_result(
-                    output={"day_count": len(itinerary)},
-                    metrics={"day_count": len(itinerary)},
-                    quality={"status": "draft_ready"},
-                    summary=f"已整合候选结果并生成 {len(itinerary)} 天 itinerary 草案。",
-                ),
+    itinerary = normalize_itinerary(_build_real_itinerary(state), state)
+    return {
+        "draft_plan": itinerary,
+        "plan": itinerary,
+        "reflection_context": {},
+        **complete_task(
+            state,
+            "synthesizer_agent",
+            build_task_result(
+                output={"day_count": len(itinerary)},
+                metrics={"day_count": len(itinerary)},
+                quality={"status": "draft_ready"},
+                summary=f"已基于真实候选结果生成 {len(itinerary)} 天 itinerary 草案。",
             ),
-        }
-    except Exception as exc:
-        logger.warning("Synthesizer failed, using fallback: %s", exc)
-        fallback = normalize_itinerary(build_fallback_itinerary(state), state)
-        return {
-            "draft_plan": fallback,
-            "plan": fallback,
-            "reflection_context": {},
-            **complete_task(
-                state,
-                "synthesizer_agent",
-                build_task_result(
-                    output={"day_count": len(fallback)},
-                    metrics={"day_count": len(fallback)},
-                    summary="synthesizer 调用失败，已使用兜底 itinerary。",
-                    used_fallback=True,
-                ),
-            ),
-        }
+        ),
+    }

@@ -1,7 +1,7 @@
 from typing import Any, Dict, List
 
 from app.agents.schemas import ReflectionContextModel, ReflectionHistoryEntryModel, ReviewIssueModel
-from app.agents.shared import build_fallback_itinerary, normalize_itinerary
+from app.agents.shared import normalize_itinerary
 from app.orchestration.task_models import build_task_result
 from app.orchestration.task_router import complete_task, reset_task_chain, task_can_retry
 
@@ -49,28 +49,39 @@ def _review_itinerary(plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return issues
 
 
-def _pick_replacement(state: Dict[str, Any], used_locations: set[str], category: str) -> str | None:
+def _classify_activity_category(activity: Dict[str, Any]) -> str:
+    text = " ".join(
+        [
+            str(activity.get("title", "")),
+            str(activity.get("type", "")),
+            str(activity.get("description", "")),
+            str(activity.get("location", "")),
+        ]
+    )
+    if any(token in text for token in ("早餐", "午餐", "晚餐", "餐", "美食", "小吃", "咖啡", "茶馆", "火锅", "面")):
+        return "food"
+    return "attraction"
+
+
+def _pick_replacement_candidate(state: Dict[str, Any], used_locations: set[str], category: str) -> Dict[str, Any] | None:
     candidate_groups = []
     if category == "food":
         candidate_groups.append(state.get("food_candidates", []) or [])
     else:
         candidate_groups.append(state.get("attraction_candidates", []) or [])
-    candidate_groups.append(state.get("attraction_candidates", []) or [])
-    candidate_groups.append(state.get("food_candidates", []) or [])
 
     for group in candidate_groups:
         for item in group:
             name = str(item.get("name", "")).strip()
             if name and name not in used_locations:
                 used_locations.add(name)
-                return name
+                return dict(item)
     return None
 
 
 def _patch_itinerary(plan: List[Dict[str, Any]], state: Dict[str, Any], issues: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     patched = normalize_itinerary(plan, state)
     patch_actions: List[Dict[str, Any]] = []
-    fallback_days = build_fallback_itinerary(state)
     used_locations = {
         str(activity.get("location", "")).strip()
         for day in patched
@@ -86,33 +97,48 @@ def _patch_itinerary(plan: List[Dict[str, Any]], state: Dict[str, Any], issues: 
         activities = day.get("activities", []) or []
 
         if issue["type"] == "missing_food":
-            replacement = _pick_replacement(state, used_locations, "food")
-            if replacement:
+            replacement = _pick_replacement_candidate(state, used_locations, "food")
+            replacement_name = str((replacement or {}).get("name", "")).strip()
+            if replacement_name:
                 activities.insert(
                     min(2, len(activities)),
                     {
                         "time": "12:30-13:30",
                         "title": "补充本地特色用餐",
-                        "description": f"根据 review 自动补充更合理的餐饮安排，优先使用真实餐饮候选 {replacement}。",
+                        "description": f"根据 review 自动补充更合理的餐饮安排，优先使用真实餐饮候选 {replacement_name}。",
                         "type": "美食餐饮",
-                        "location": replacement,
+                        "location": replacement_name,
                         "duration": 60,
                         "cost_estimate": 90,
                         "ticket_price": 0,
                         "tips": "建议错峰到店。",
                         "transportation": "步行/网约车",
+                        "source": replacement.get("source", ""),
+                        "source_id": replacement.get("id", ""),
                     },
                 )
-                patch_actions.append({"day": day_no, "action": "insert_food", "location": replacement})
+                patch_actions.append({"day": day_no, "action": "insert_food", "location": replacement_name})
 
         elif issue["type"] == "missing_activities":
-            fallback_activities = fallback_days[day_no - 1].get("activities", [])
-            while len(activities) < 5 and fallback_activities:
-                next_activity = dict(fallback_activities[len(activities) % len(fallback_activities)])
-                next_activity["title"] = f"{next_activity.get('title', '补充活动')}（修补）"
-                candidate_location = _pick_replacement(state, used_locations, "attraction")
-                if candidate_location:
-                    next_activity["location"] = candidate_location
+            while len(activities) < 5:
+                replacement = _pick_replacement_candidate(state, used_locations, "attraction")
+                candidate_location = str((replacement or {}).get("name", "")).strip()
+                if not candidate_location:
+                    break
+                next_activity = {
+                    "time": "15:30-17:00",
+                    "title": candidate_location,
+                    "description": f"基于真实候选结果补充的行程活动：{candidate_location}。",
+                    "type": "景点游览",
+                    "location": candidate_location,
+                    "duration": 90,
+                    "cost_estimate": 0,
+                    "ticket_price": 0,
+                    "tips": "建议根据开放时间调整顺序。",
+                    "transportation": "步行/网约车",
+                    "source": replacement.get("source", ""),
+                    "source_id": replacement.get("id", ""),
+                }
                 activities.append(next_activity)
                 patch_actions.append({"day": day_no, "action": "append_activity", "location": next_activity.get("location", "")})
 
@@ -122,15 +148,22 @@ def _patch_itinerary(plan: List[Dict[str, Any]], state: Dict[str, Any], issues: 
             for activity in activities:
                 if str(activity.get("location", "")).strip() != duplicate_name:
                     continue
-                replacement = _pick_replacement(state, used_locations, "attraction")
-                if replacement and replacement != duplicate_name:
-                    activity["location"] = replacement
-                    activity["description"] = f"{activity.get('description', '')} 已根据 review 替换重复地点。".strip()
-                    patch_actions.append({"day": day_no, "action": "replace_duplicate", "from": duplicate_name, "to": replacement})
+                category = _classify_activity_category(activity)
+                replacement = _pick_replacement_candidate(state, used_locations, category)
+                replacement_name = str((replacement or {}).get("name", "")).strip()
+                if replacement_name and replacement_name != duplicate_name:
+                    activity["location"] = replacement_name
+                    activity["title"] = (
+                        replacement_name
+                        if category != "food"
+                        else str(activity.get("title", "")).replace(duplicate_name, replacement_name) or replacement_name
+                    )
+                    activity["description"] = f"基于真实候选结果替换重复地点，调整为 {replacement_name}。"
+                    activity["source"] = replacement.get("source", "")
+                    activity["source_id"] = replacement.get("id", "")
+                    patch_actions.append({"day": day_no, "action": "replace_duplicate", "from": duplicate_name, "to": replacement_name})
                     replaced = True
                     break
-            if replaced:
-                used_locations.add(replacement)
 
         elif issue["type"] == "missing_hotel":
             hotel_options = state.get("hotel_options", []) or []
@@ -138,7 +171,7 @@ def _patch_itinerary(plan: List[Dict[str, Any]], state: Dict[str, Any], issues: 
                 hotel = hotel_options[0]
                 day["hotel_recommendation"] = {
                     "name": hotel.get("name", state["city"]),
-                    "price_estimate": hotel.get("price", "待查询"),
+                    "price_estimate": hotel.get("price", ""),
                     "address": hotel.get("address", state["city"]),
                     "reason": "review 阶段自动补充住宿建议，确保每日行程闭环。",
                 }

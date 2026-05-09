@@ -1,6 +1,5 @@
 import logging
 from typing import List, Dict, Any, Optional
-import json
 
 logger = logging.getLogger(__name__)
 
@@ -64,36 +63,28 @@ class BudgetService:
         """
         logger.info(f"Estimating budget for {len(itinerary)} days, {travelers} travelers, {budget_level} level")
         
-        # 计算总天数（在try块外定义，确保在except块中可用）
         days = len(itinerary) if itinerary else 1
+
+        base_budget = self.budget_levels.get(budget_level, self.budget_levels["中等"])
+        breakdown = self._calculate_breakdown_from_itinerary(itinerary, travelers, base_budget)
+        total = sum(int(value) for value in breakdown.values())
+        activity_adjustment = self._calculate_activity_adjustment(itinerary)
         
-        try:
-            # 获取基准预算
-            base_budget = self.budget_levels.get(budget_level, self.budget_levels["中等"])
-            breakdown = self._calculate_breakdown_from_itinerary(itinerary, travelers, base_budget)
-            total = sum(int(value) for value in breakdown.values())
-            activity_adjustment = self._calculate_activity_adjustment(itinerary)
-            
-            # 生成预算报告
-            budget_report = {
-                "total": int(total),
-                "per_person": int(total / travelers) if travelers > 0 else int(total),
-                "per_day": int(total / days) if days > 0 else int(total),
-                "breakdown": breakdown,
-                "currency": "CNY",
-                "budget_level": budget_level,
-                "travelers": travelers,
-                "days": days,
-                "activity_adjustment": round(activity_adjustment, 2),
-                "tips": self._get_budget_tips(budget_level, itinerary)
-            }
-            
-            logger.info(f"Budget estimated: {budget_report['total']} CNY")
-            return budget_report
-            
-        except Exception as e:
-            logger.error(f"Error estimating budget: {e}")
-            return self._get_fallback_budget(days, travelers, budget_level)
+        budget_report = {
+            "total": int(total),
+            "per_person": int(total / travelers) if travelers > 0 else int(total),
+            "per_day": int(total / days) if days > 0 else int(total),
+            "breakdown": breakdown,
+            "currency": "CNY",
+            "budget_level": budget_level,
+            "travelers": travelers,
+            "days": days,
+            "activity_adjustment": round(activity_adjustment, 2),
+            "tips": self._get_budget_tips(budget_level, itinerary)
+        }
+        
+        logger.info(f"Budget estimated: {budget_report['total']} CNY")
+        return budget_report
 
     def _safe_number(self, value: Any) -> float:
         try:
@@ -228,40 +219,6 @@ class BudgetService:
             tips.append("文化体验建议：部分博物馆有免费开放日，可提前查询")
         
         return tips
-    
-    def _get_fallback_budget(self, days: int, travelers: int, budget_level: str) -> Dict[str, Any]:
-        """获取回退预算（当计算失败时）"""
-        base_cost = {
-            "经济": 300,
-            "中等": 500,
-            "豪华": 1000
-        }.get(budget_level, 500)
-        
-        total = base_cost * days * travelers
-        
-        breakdown = {
-            "accommodation": int(total * 0.4),
-            "food": int(total * 0.3),
-            "transportation": int(total * 0.15),
-            "tickets": int(total * 0.1),
-            "shopping": int(total * 0.05)
-        }
-        
-        return {
-            "total": total,
-            "per_person": base_cost * days,
-            "per_day": base_cost * travelers,
-            "breakdown": breakdown,
-            "currency": "CNY",
-            "budget_level": budget_level,
-            "travelers": travelers,
-            "days": days,
-            "activity_adjustment": 1.0,
-            "tips": [
-                "此为估算费用，实际花费可能有所不同",
-                "建议根据实际情况调整预算"
-            ]
-        }
     
     def optimize_budget(
         self, 

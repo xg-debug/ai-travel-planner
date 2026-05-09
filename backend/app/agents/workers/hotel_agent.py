@@ -1,6 +1,12 @@
 from typing import Any, Dict, List
 
-from app.agents.shared import build_query_agent_fallback, build_recommendation_from_candidates, normalize_search_query, score_general_candidate
+from app.agents.shared import (
+    build_query_agent_fallback,
+    build_recommendation_from_candidates,
+    filter_real_candidates,
+    normalize_search_query,
+    score_general_candidate,
+)
 from app.agents.workers.base_react_agent import BaseReActAgent
 from app.orchestration.task_models import build_task_result
 from app.orchestration.task_router import complete_task, get_ready_task_for_step
@@ -37,7 +43,7 @@ def hotel_react_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     task_inputs = task.get("inputs", {}) if task else {}
     queries = task_inputs.get("queries") or query_plan.get("hotel_queries") or build_query_agent_fallback(state)["hotel_queries"]
     react_result = hotel_react_agent.run(state, queries, task=task)
-    hotels = react_result["items"]
+    hotels = filter_real_candidates(react_result["items"], allow_sources={"hotel", "agentichotel", "geo", "amap"})
     recommendations = list(state.get("recommendations", []) or [])
     if hotels:
         recommendations.append(

@@ -1,8 +1,7 @@
 from typing import Any, Dict
 
-from app.services.amap_service import get_weather_forecast
+from app.domain import travel_domain_service
 
 
 def get_weather_tool(city: str, days: int) -> Dict[str, Any]:
-    return get_weather_forecast(city, days)
-
+    return travel_domain_service.get_weather(city, days)

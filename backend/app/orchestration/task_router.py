@@ -34,12 +34,6 @@ def get_ready_tasks(state: Dict[str, Any]) -> List[Dict[str, Any]]:
             ready.append(task)
     return ready
 
-
-def get_next_ready_task(state: Dict[str, Any]) -> Dict[str, Any] | None:
-    ready_tasks = get_ready_tasks(state)
-    return ready_tasks[0] if ready_tasks else None
-
-
 def get_ready_task_for_step(state: Dict[str, Any], step: str) -> Dict[str, Any] | None:
     completed_tasks = list(state.get("completed_tasks", []) or [])
     for task in state.get("tasks", []) or []:

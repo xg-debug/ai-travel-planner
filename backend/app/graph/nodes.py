@@ -2,7 +2,7 @@ import logging
 from typing import Any, Dict
 
 from app.agents.shared import build_local_summary
-from app.services.amap_service import get_weather_forecast
+from app.domain import travel_domain_service
 from app.services.budget_service import estimate_budget
 
 logger = logging.getLogger(__name__)
@@ -15,11 +15,7 @@ def weather_tool_step(state: Dict[str, Any]) -> Dict[str, Any]:
     city = state["city"]
     days = state["days"]
 
-    try:
-        weather_data = get_weather_forecast(city, days)
-    except Exception as exc:
-        logger.error("Error fetching weather: %s", exc)
-        weather_data = {"city": city, "report_time": "", "forecast": []}
+    weather_data = travel_domain_service.get_weather(city, days)
 
     logger.info("Weather data fetched: %s days", len(weather_data.get("forecast", [])))
     return {"weather_data": weather_data}
@@ -46,11 +42,6 @@ def budget_node(state: Dict[str, Any]) -> Dict[str, Any]:
 def summary_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """行程总结步骤。"""
     logger.info("Generating final trip summary")
-
-    try:
-        final_output = build_local_summary(state)
-        logger.info("Summary generated locally")
-        return {"final_output": final_output}
-    except Exception as exc:
-        logger.error("Error in summary_node: %s", exc)
-        return {"final_output": f"# {state['city']} {state['days']}天旅行计划\n请稍后重试以获取完整总结。"}
+    final_output = build_local_summary(state)
+    logger.info("Summary generated locally")
+    return {"final_output": final_output}

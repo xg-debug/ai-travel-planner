@@ -1,9 +1,7 @@
 import requests
 import logging
 import re
-import math
 from typing import List, Dict, Any, Optional
-from datetime import datetime
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -99,41 +97,6 @@ def _is_valid_route_coordinate(value: str) -> bool:
         return False
 
 
-def _estimate_direct_route(origin: str, destination: str) -> Dict[str, Any]:
-    try:
-        origin_lng, origin_lat = [float(item) for item in origin.split(",")[:2]]
-        dest_lng, dest_lat = [float(item) for item in destination.split(",")[:2]]
-    except Exception as exc:
-        raise RuntimeError(f"无法估算直线路线: {exc}") from exc
-
-    def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        radius = 6371000
-        phi1 = math.radians(lat1)
-        phi2 = math.radians(lat2)
-        d_phi = math.radians(lat2 - lat1)
-        d_lambda = math.radians(lon2 - lon1)
-        a = (
-            math.sin(d_phi / 2) ** 2
-            + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
-        )
-        return 2 * radius * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-    distance = haversine(origin_lat, origin_lng, dest_lat, dest_lng)
-    duration = max(int(distance / 8), 300)
-    return {
-        "distance": int(distance),
-        "duration": duration,
-        "steps": [
-            {
-                "instruction": "使用直连降级路线",
-                "polyline": f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}",
-            }
-        ],
-        "toll": 0,
-        "traffic_lights": 0,
-        "fallback": True,
-    }
-
 class AMapService:
     """高德地图服务"""
     
@@ -197,13 +160,13 @@ class AMapService:
                         "lng": lng,
                         "address": _safe_text(poi.get("address"), city),
                         "type": _safe_text(poi.get("type")),
-                        "rating": _safe_float(biz_ext.get("rating"), 4.0) or 4.0,
-                        "price": _safe_text(biz_ext.get("cost"), "免费"),
+                        "rating": _safe_float(biz_ext.get("rating"), 0.0),
+                        "price": _safe_text(biz_ext.get("cost"), ""),
                         "description": f"{_safe_text(poi.get('name'))}位于{_safe_text(poi.get('address'), city)}",
-                        "opening_hours": _safe_text(biz_ext.get("opentime"), "09:00-17:00"),
+                        "opening_hours": _safe_text(biz_ext.get("opentime"), ""),
                         "image_url": image_url,
-                        "best_time": "上午",
-                        "tips": "建议提前查询最新信息"
+                        "best_time": "",
+                        "tips": ""
                     })
                 return pois
             else:
@@ -229,7 +192,7 @@ class AMapService:
                 if not name or name in seen:
                     continue
                 price_text = _safe_text(poi.get("price"), "")
-                poi["price"] = price_text if price_text and price_text != "免费" else "待查询"
+                poi["price"] = price_text if price_text and price_text != "免费" else ""
                 seen.add(name)
                 results.append(poi)
                 if len(results) >= size:
@@ -303,30 +266,8 @@ class AMapService:
             raise RuntimeError("AMAP_API_KEY 未配置，无法计算路线")
         
         try:
-            if _is_valid_route_coordinate(origin) and _is_valid_route_coordinate(destination):
-                params = {
-                    "key": self.api_key,
-                    "origin": origin,
-                    "destination": destination,
-                    "strategy": self._get_route_strategy(mode)
-                }
-
-                response = requests.get(f"{self.base_url}/direction/{mode}", params=params, timeout=10)
-                response.raise_for_status()
-                data = response.json()
-
-                if data.get("status") == "1" and data.get("route", {}).get("paths"):
-                    route = data["route"]["paths"][0]
-                    return {
-                        "distance": route.get("distance", 0),
-                        "duration": route.get("duration", 0),
-                        "steps": route.get("steps", []),
-                        "toll": route.get("toll", 0),
-                        "traffic_lights": route.get("traffic_lights", 0)
-                    }
-
-                logger.warning("AMap route not found, fallback to direct line: %s -> %s", origin, destination)
-                return _estimate_direct_route(origin, destination)
+            if not _is_valid_route_coordinate(origin) or not _is_valid_route_coordinate(destination):
+                raise RuntimeError("高德路线规划要求使用有效经纬度坐标")
 
             params = {
                 "key": self.api_key,
@@ -353,8 +294,6 @@ class AMapService:
                 
         except Exception as e:
             logger.error(f"Error calculating route: {e}")
-            if _is_valid_route_coordinate(origin) and _is_valid_route_coordinate(destination):
-                return _estimate_direct_route(origin, destination)
             raise
     
     def _parse_weather_data(self, weather_data: Dict[str, Any], city: str, days: int) -> Dict[str, Any]:
@@ -379,8 +318,8 @@ class AMapService:
                         "max": _safe_int(cast.get("daytemp"), 0),
                         "avg": (_safe_int(cast.get("nighttemp"), 0) + _safe_int(cast.get("daytemp"), 0)) // 2
                     },
-                    "humidity": _safe_int(cast.get("dayhumidity"), 60),
-                    "wind_speed": _safe_int(cast.get("daypower"), 3),
+                    "humidity": _safe_int(cast.get("dayhumidity"), 0),
+                    "wind_speed": _safe_int(cast.get("daypower"), 0),
                     "day_wind_direction": cast.get("daywind", ""),
                     "night_wind_direction": cast.get("nightwind", ""),
                     "day_wind_power": cast.get("daypower", ""),

@@ -1,10 +1,6 @@
 import logging
 from typing import Any, Dict, List
 
-from app.agents.shared import extract_json_block
-from app.core.config import settings
-from app.core.llm import invoke_llm_with_fallback
-
 logger = logging.getLogger(__name__)
 
 
@@ -86,29 +82,6 @@ class BaseTaskExecutionAgent:
         available = self.available_actions(state, task, context)
         if not available:
             return {"thought": "没有剩余可执行动作，结束任务。", "action": "finish", "target": ""}
-
-        try:
-            response = invoke_llm_with_fallback(
-                self.build_prompt(state, task, context, trace, step_index),
-                temperature=0.1,
-                max_tokens=220,
-                request_timeout=12,
-                max_retries=0,
-                provider_order=[state.get("provider", settings.DEFAULT_LLM_PROVIDER), "deepseek", "openai", "anthropic", "google"],
-            )
-            content = response.content if isinstance(response.content, str) else str(response.content)
-            parsed = extract_json_block(content)
-            if isinstance(parsed, dict):
-                action = str(parsed.get("action", "")).strip()
-                if action in available:
-                    return {
-                        "thought": str(parsed.get("thought", "")).strip() or "继续执行下一步。",
-                        "action": action,
-                        "target": str(parsed.get("target", "")).strip(),
-                    }
-        except Exception as exc:
-            logger.info("%s llm execution fallback: %s", self.name, exc)
-
         return self.fallback_action(state, task, context, available, step_index)
 
     def fallback_action(self, state: Dict[str, Any], task: Dict[str, Any], context: Dict[str, Any], available: List[str], step_index: int) -> Dict[str, Any]:

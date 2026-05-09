@@ -9,7 +9,7 @@ from app.tools.amap_tools import calculate_route_tool
 logger = logging.getLogger(__name__)
 
 
-def _format_route_input(item: Dict[str, Any]) -> str:
+def _format_route_input(item: Dict[str, Any]) -> str | None:
     lat = item.get("lat")
     lng = item.get("lng")
     coordinates = item.get("coordinates") or {}
@@ -19,7 +19,7 @@ def _format_route_input(item: Dict[str, Any]) -> str:
         lng = coordinates.get("lng")
     if lat is not None and lng is not None:
         return f"{lng},{lat}"
-    return str(item.get("address", "") or item.get("name", "")).strip()
+    return None
 
 
 class TransportExecutionAgent(BaseTaskExecutionAgent):
@@ -47,10 +47,16 @@ class TransportExecutionAgent(BaseTaskExecutionAgent):
 
         pending_pairs: List[Dict[str, Any]] = []
         for idx in range(len(chain) - 1):
+            origin_coord = _format_route_input(chain[idx])
+            destination_coord = _format_route_input(chain[idx + 1])
+            if not origin_coord or not destination_coord:
+                continue
             pending_pairs.append(
                 {
                     "origin": chain[idx],
                     "destination": chain[idx + 1],
+                    "origin_coord": origin_coord,
+                    "destination_coord": destination_coord,
                     "label": f"{chain[idx].get('name', '')} -> {chain[idx + 1].get('name', '')}",
                 }
             )
@@ -59,6 +65,7 @@ class TransportExecutionAgent(BaseTaskExecutionAgent):
             "mode": mode,
             "pending_pairs": pending_pairs,
             "built_legs": [],
+            "failed_legs": [],
             "total_distance": 0,
             "total_duration": 0,
             "summary_ready": False,
@@ -86,10 +93,22 @@ class TransportExecutionAgent(BaseTaskExecutionAgent):
             origin = pair["origin"]
             destination = pair["destination"]
             try:
-                route = calculate_route_tool(_format_route_input(origin), _format_route_input(destination), next_context.get("mode", "driving"))
+                route = calculate_route_tool(pair["origin_coord"], pair["destination_coord"], next_context.get("mode", "driving"))
             except Exception as exc:
                 logger.warning("transport route failed: %s", exc)
-                route = {"distance": 0, "duration": 0, "steps": [], "fallback": True}
+                failed_legs = list(next_context.get("failed_legs", []))
+                failed_legs.append(
+                    {
+                        "from": origin.get("name", ""),
+                        "to": destination.get("name", ""),
+                        "error": str(exc),
+                    }
+                )
+                next_context["failed_legs"] = failed_legs
+                next_context["pending_pairs"] = pending_pairs
+                trace_entry["target"] = pair.get("label", "")
+                trace_entry["observation"] = f"路线查询失败：{exc}"
+                return next_context
 
             duration = int(route.get("duration", 0) or 0)
             distance = int(route.get("distance", 0) or 0)
@@ -103,7 +122,6 @@ class TransportExecutionAgent(BaseTaskExecutionAgent):
                     "duration_minutes": duration // 60 if duration else 0,
                     "distance_km": round(distance / 1000, 1) if distance else 0,
                     "mode": next_context.get("mode", "driving"),
-                    "fallback": bool(route.get("fallback")),
                 }
             ]
             trace_entry["target"] = pair.get("label", "")
@@ -112,13 +130,14 @@ class TransportExecutionAgent(BaseTaskExecutionAgent):
 
         if action_name == "summarize_route":
             legs = list(next_context.get("built_legs", []))
+            failed_legs = list(next_context.get("failed_legs", []))
             if legs:
                 route_style = "优先围绕同一区域串联景点、餐饮与酒店，减少来回折返。"
-                if any(leg.get("fallback") for leg in legs):
-                    route_style = "部分路线使用降级估算，建议出行前再次确认导航结果。"
-                next_context["summary"] = route_style
+                if failed_legs:
+                    route_style += f" 另有 {len(failed_legs)} 段路线未查询成功，未写入距离与时长。"
             else:
-                next_context["summary"] = "缺少足够候选点，无法生成详细动线。"
+                route_style = "缺少足够坐标信息，无法生成详细动线。"
+            next_context["summary"] = route_style
             next_context["summary_ready"] = True
             trace_entry["observation"] = next_context["summary"]
         return next_context
@@ -128,12 +147,14 @@ class TransportExecutionAgent(BaseTaskExecutionAgent):
 
     def finalize(self, state: Dict[str, Any], task: Dict[str, Any], context: Dict[str, Any], trace: List[Dict[str, Any]]) -> Dict[str, Any]:
         legs = list(context.get("built_legs", []))
+        failed_legs = list(context.get("failed_legs", []))
         transport_plan = {
             "mode": context.get("mode", "driving"),
             "legs": legs,
+            "failed_legs": failed_legs,
             "total_duration_minutes": int(context.get("total_duration", 0) or 0) // 60 if context.get("total_duration") else 0,
             "total_distance_km": round(int(context.get("total_distance", 0) or 0) / 1000, 1) if context.get("total_distance") else 0,
-            "summary": context.get("summary") or ("优先围绕同一区域串联景点、餐饮与酒店，减少来回折返。" if legs else "缺少足够候选点，无法生成详细动线。"),
+            "summary": context.get("summary") or ("优先围绕同一区域串联景点、餐饮与酒店，减少来回折返。" if legs else "缺少足够坐标信息，无法生成详细动线。"),
         }
         return {
             "transport_plan": transport_plan,
@@ -141,12 +162,12 @@ class TransportExecutionAgent(BaseTaskExecutionAgent):
                 output={"plan": transport_plan},
                 metrics={
                     "legs": len(legs),
+                    "failed_legs": len(failed_legs),
                     "distance_km": transport_plan["total_distance_km"],
                     "duration_minutes": transport_plan["total_duration_minutes"],
                 },
                 trace=trace,
                 summary=transport_plan["summary"],
-                used_fallback=bool(legs and any(leg.get("fallback") for leg in legs)),
             ),
         }
 

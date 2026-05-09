@@ -1,11 +1,6 @@
-import logging
 from typing import Any, Dict, List
 
-from app.agents.schemas import PlannerOutput
-from app.agents.planner.planner_prompt import build_planner_prompt
-from app.agents.shared import build_query_agent_fallback, dedupe, extract_json_block, normalize_preferences
-from app.core.config import settings
-from app.core.llm import invoke_llm_with_fallback
+from app.agents.shared import build_query_agent_fallback, dedupe, normalize_preferences
 from app.orchestration.task_models import (
     ATTRACTION_STEP,
     FOOD_STEP,
@@ -16,9 +11,6 @@ from app.orchestration.task_models import (
     TRANSPORT_STEP,
     build_task,
 )
-
-logger = logging.getLogger(__name__)
-
 
 def _build_food_queries(state: Dict[str, Any]) -> List[str]:
     city = state["city"]
@@ -130,26 +122,7 @@ def _build_execution_plan(state: Dict[str, Any], query_plan: Dict[str, Any]) -> 
 
 
 def planner_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    parsed: Dict[str, Any] | None = None
-    try:
-        response = invoke_llm_with_fallback(
-            build_planner_prompt(state),
-            temperature=0.3,
-            max_tokens=700,
-            request_timeout=40,
-            max_retries=1,
-            provider_order=[state.get("provider", settings.DEFAULT_LLM_PROVIDER), "deepseek", "openai", "anthropic", "google"],
-        )
-        content = response.content if isinstance(response.content, str) else str(response.content)
-        raw = extract_json_block(content)
-        if isinstance(raw, dict):
-            parsed = PlannerOutput.model_validate(raw).model_dump()
-        else:
-            raise ValueError("planner agent 返回结构无效")
-    except Exception as exc:
-        logger.warning("Planner agent failed, using fallback: %s", exc)
-
-    query_plan = _build_query_plan(state, parsed)
+    query_plan = _build_query_plan(state, None)
     execution_plan = _build_execution_plan(state, query_plan)
     return {
         "query_plan": query_plan,

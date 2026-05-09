@@ -512,10 +512,25 @@ export const useTripStore = defineStore('trip', () => {
   const mapActivityType = (rawType: string | undefined): Activity['type'] => {
     const value = (rawType || '').toLowerCase()
     if (value.includes('美食') || value.includes('餐')) return 'food'
-    if (value.includes('文化') || value.includes('博物') || value.includes('历史')) return 'culture'
-    if (value.includes('户外') || value.includes('自然')) return 'outdoor'
+    if (
+      value.includes('文化')
+      || value.includes('博物')
+      || value.includes('历史')
+      || value.includes('景点')
+      || value.includes('游览')
+      || value.includes('地标')
+      || value.includes('古镇')
+      || value.includes('街区')
+      || value.includes('寺')
+      || value.includes('院')
+      || value.includes('展馆')
+      || value.includes('美术馆')
+      || value.includes('遗址')
+      || value.includes('记忆')
+    ) return 'culture'
+    if (value.includes('户外') || value.includes('自然') || value.includes('公园') || value.includes('风景')) return 'outdoor'
     if (value.includes('购物')) return 'shopping'
-    if (value.includes('娱乐')) return 'entertainment'
+    if (value.includes('娱乐') || value.includes('休闲')) return 'entertainment'
     if (value.includes('交通')) return 'transport'
     return 'other'
   }

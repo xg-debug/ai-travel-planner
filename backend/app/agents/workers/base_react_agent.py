@@ -1,9 +1,7 @@
 import logging
 from typing import Any, Callable, Dict, List
 
-from app.agents.shared import dedupe, extract_json_block
-from app.core.config import settings
-from app.core.llm import invoke_llm_with_fallback
+from app.agents.shared import dedupe
 
 logger = logging.getLogger(__name__)
 
@@ -85,36 +83,7 @@ class BaseReActAgent:
     def _decide_action(self, state: Dict[str, Any], pending_queries: List[str], collected: List[Dict[str, Any]], trace: List[Dict[str, Any]], step_index: int, goal: str, title: str) -> Dict[str, Any]:
         if not pending_queries:
             return {"thought": "没有剩余可执行查询，结束当前任务。", "action": "finish"}
-        action = self._decide_action_with_llm(state, pending_queries, collected, trace, step_index, goal, title)
-        if action:
-            return action
         return self._fallback_action(pending_queries, collected, step_index)
-
-    def _decide_action_with_llm(self, state: Dict[str, Any], pending_queries: List[str], collected: List[Dict[str, Any]], trace: List[Dict[str, Any]], step_index: int, goal: str, title: str) -> Dict[str, Any] | None:
-        try:
-            response = invoke_llm_with_fallback(
-                self._build_react_prompt(state, pending_queries, collected, trace, step_index, goal, title),
-                temperature=0.1,
-                max_tokens=220,
-                request_timeout=12,
-                max_retries=0,
-                provider_order=[state.get("provider", settings.DEFAULT_LLM_PROVIDER), "deepseek", "openai", "anthropic", "google"],
-            )
-            content = response.content if isinstance(response.content, str) else str(response.content)
-            parsed = extract_json_block(content)
-            if not isinstance(parsed, dict):
-                return None
-            action = str(parsed.get("action", "")).strip()
-            query = str(parsed.get("query", "")).strip()
-            if action == "finish":
-                if not self._finish_allowed(collected, pending_queries, step_index):
-                    return None
-                return {"thought": str(parsed.get("thought", "")).strip() or "信息已经足够，结束任务。", "action": "finish", "query": ""}
-            if action == self.tool_name and query in pending_queries:
-                return {"thought": str(parsed.get("thought", "")).strip() or "继续搜索下一条候选查询。", "action": action, "query": query}
-        except Exception as exc:
-            logger.info("%s llm react planning fallback: %s", self.name, exc)
-        return None
 
     def _build_react_prompt(self, state: Dict[str, Any], pending_queries: List[str], collected: List[Dict[str, Any]], trace: List[Dict[str, Any]], step_index: int, goal: str, title: str) -> str:
         recent_trace = trace[-2:]

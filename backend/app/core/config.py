@@ -47,6 +47,17 @@ class Settings(BaseSettings):
     # 旅游数据API
     TRIP_ADVISOR_API_KEY: Optional[str] = os.getenv("TRIP_ADVISOR_API_KEY")
     YELP_API_KEY: Optional[str] = os.getenv("YELP_API_KEY")
+
+    # 酒店 MCP 配置
+    HOTEL_PROVIDER: str = os.getenv("HOTEL_PROVIDER", "auto")
+    ROLLINGGO_API_KEY: Optional[str] = os.getenv("ROLLINGGO_API_KEY")
+    AIGOHOTEL_API_KEY: Optional[str] = os.getenv("AIGOHOTEL_API_KEY")
+    AGENTICHOTEL_MCP_COMMAND: str = os.getenv("AGENTICHOTEL_MCP_COMMAND", "uvx")
+    AGENTICHOTEL_MCP_ARGS: str = os.getenv("AGENTICHOTEL_MCP_ARGS", "--from rollinggo-mcp rollinggo-mcp")
+    AGENTICHOTEL_MCP_CWD: Optional[str] = os.getenv("AGENTICHOTEL_MCP_CWD")
+    AGENTICHOTEL_MCP_STARTUP_TIMEOUT: float = float(os.getenv("AGENTICHOTEL_MCP_STARTUP_TIMEOUT", "20"))
+    AGENTICHOTEL_MCP_REQUEST_TIMEOUT: float = float(os.getenv("AGENTICHOTEL_MCP_REQUEST_TIMEOUT", "60"))
+
     # 安全配置
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
     ALGORITHM: str = "HS256"

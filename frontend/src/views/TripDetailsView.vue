@@ -517,11 +517,23 @@ const isScenicLikeActivity = (activity: Activity | any) => {
   return activity?.type === 'culture'
     || activity?.type === 'outdoor'
     || activity?.type === 'shopping'
-    || textIncludesAny(activity, ['公园', '博物馆', '旧址', '故居', '景区', '街区', '古镇', '湖', '塔', '寺', '展馆', '美术馆', '遗址'])
+    || textIncludesAny(activity, ['公园', '博物馆', '旧址', '故居', '景区', '街区', '古镇', '湖', '塔', '寺', '院', '展馆', '美术馆', '遗址', '地标', '记忆'])
+}
+
+const uniqueActivitiesByLocation = (activities: (Activity | any)[]) => {
+  const seen = new Set<string>()
+  return activities.filter((activity) => {
+    const sourceId = String(activity?.source_id || '').trim()
+    const location = String(activity?.location || activity?.title || '').trim()
+    const key = `${sourceId || location}::${location}`
+    if (!location || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 const dayAttractions = computed(() =>
-  (activeDay.value?.activities || []).filter((activity) => isScenicLikeActivity(activity))
+  uniqueActivitiesByLocation((activeDay.value?.activities || []).filter((activity) => isScenicLikeActivity(activity)))
 )
 const dayMeals = computed(() =>
   (activeDay.value?.activities || []).filter((activity) => isMealLikeActivity(activity))

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from typing import List, Optional, Dict, Any
 import logging
@@ -15,7 +15,7 @@ from app.models.user import User
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from app.services.amap_service import search_pois, get_weather_forecast, calculate_route
+from app.domain import travel_domain_service
 from app.services.recommendation_service import get_recommendations
 from app.services.budget_service import estimate_budget
 from app.core.config import settings
@@ -100,11 +100,17 @@ def _validate_trip_request(request: TripRequest) -> None:
 
 def _friendly_error_message(error_text: str) -> str:
     if "Insufficient Balance" in error_text or "402" in error_text:
-        return "AI服务余额不足，已尝试自动切换模型但仍失败，请充值或更换可用模型"
+        return "AI服务余额不足，请充值或更换可用模型"
     if "未检测到可用的 LLM API Key" in error_text or "未配置" in error_text:
         return "未配置可用的AI模型密钥，请先在后端环境变量中配置 OpenAI/Anthropic/Google/DeepSeek Key"
     if "timed out" in error_text.lower() or "timeout" in error_text.lower():
         return "AI服务响应超时，请稍后重试（可检查模型服务连通性）"
+    if "真实景点候选不足" in error_text:
+        return "未查询到足够的真实景点数据，请换一个更具体的城市或稍后重试"
+    if "真实餐饮候选不足" in error_text:
+        return "未查询到足够的真实餐饮数据，请换一个更具体的城市或稍后重试"
+    if "真实酒店候选为空" in error_text:
+        return "未查询到真实酒店数据，请检查酒店MCP或地图服务配置后重试"
     return "行程规划失败，请稍后重试"
 
 
@@ -369,7 +375,7 @@ async def get_weather(city: str, days: int = 3):
     logger.info(f"Getting weather for {city} ({days} days)")
     
     try:
-        weather_data = get_weather_forecast(city, days)
+        weather_data = travel_domain_service.get_weather(city, days)
         forecasts = weather_data.get('forecast', [])
         
         weather_list = []
@@ -377,12 +383,12 @@ async def get_weather(city: str, days: int = 3):
             weather_info = WeatherInfo(
                 city=city,
                 date=forecast.get('date', ''),
-                temperature=forecast.get('temperature', {}).get('avg', 20),
-                condition=forecast.get('condition', '未知'),
+                temperature=forecast.get('temperature', {}).get('avg', 0),
+                condition=forecast.get('condition', ''),
                 day_condition=forecast.get('day_condition'),
                 night_condition=forecast.get('night_condition'),
-                humidity=forecast.get('humidity', 60),
-                wind_speed=forecast.get('wind_speed', 10),
+                humidity=forecast.get('humidity', 0),
+                wind_speed=forecast.get('wind_speed', 0),
                 day_wind_direction=forecast.get('day_wind_direction'),
                 night_wind_direction=forecast.get('night_wind_direction'),
                 day_wind_power=forecast.get('day_wind_power'),
@@ -414,7 +420,7 @@ async def search_poi(keyword: str, city: str, page: int = 1, size: int = 10):
     logger.info(f"Searching POIs: {keyword} in {city}")
     
     try:
-        pois = search_pois(keyword, city, page, size)
+        pois = travel_domain_service.search_pois(keyword, city, page, size)
         
         poi_list = []
         for poi in pois:
@@ -424,12 +430,12 @@ async def search_poi(keyword: str, city: str, page: int = 1, size: int = 10):
                 lat=poi.get('lat', 0),
                 lng=poi.get('lng', 0),
                 address=poi.get('address', ''),
-                type=poi.get('type', '景点'),
-                rating=poi.get('rating', 4.0),
-                price=poi.get('price', '免费'),
+                type=poi.get('type', ''),
+                rating=poi.get('rating', 0.0),
+                price=poi.get('price', ''),
                 description=poi.get('description', ''),
-                opening_hours=poi.get('opening_hours', '09:00-17:00'),
-                best_time=poi.get('best_time', '全天'),
+                opening_hours=poi.get('opening_hours', ''),
+                best_time=poi.get('best_time', ''),
                 tips=poi.get('tips', ''),
                 image_url=poi.get('image_url')
             )
@@ -501,14 +507,7 @@ async def optimize_trip_route(request: RouteOptimizeRequest):
     """
     logger.info(f"Optimizing route for {len(request.pois)} POIs")
     
-    try:
-        # 这里可以添加路线优化逻辑
-        # 目前返回原始POI列表
-        return {"route": request.pois, "optimized": True, "constraints": request.constraints or {}}
-        
-    except Exception as e:
-        logger.error(f"Error optimizing route: {e}")
-        raise HTTPException(status_code=500, detail="路线优化失败")
+    raise HTTPException(status_code=501, detail="路线优化接口尚未实现真实优化逻辑，已禁用占位返回")
 
 @router.post("/route/calculate")
 async def calculate_trip_route(request: RouteCalculateRequest):
@@ -526,7 +525,7 @@ async def calculate_trip_route(request: RouteCalculateRequest):
     logger.info(f"Calculating route from {request.origin} to {request.destination} by {request.mode}")
     
     try:
-        route = calculate_route(request.origin, request.destination, request.mode)
+        route = travel_domain_service.calculate_route(request.origin, request.destination, request.mode)
         return route
         
     except Exception as e:
