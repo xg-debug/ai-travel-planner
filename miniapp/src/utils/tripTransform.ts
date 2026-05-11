@@ -38,7 +38,7 @@ export const convertTripResponse = (response: TripResponse, request: TripRequest
     weather,
     hotels,
     recommendations: [
-      ...convertRecommendations(response.recommendations || []),
+      ...convertRecommendations(response.recommendations || [], response.pois || {}),
       ...hotels
     ],
     plan: response.plan,
@@ -107,20 +107,33 @@ const convertBudgetBreakdown = (breakdown: any): BudgetCategory[] => {
   }))
 }
 
-const convertRecommendations = (recommendations: any[]): POI[] => {
+const convertRecommendations = (recommendations: any[], poiMap: Record<string, any> = {}): POI[] => {
   return recommendations.flatMap((rec, recIndex) => {
     const items = Array.isArray(rec.items) && rec.items.length ? rec.items : [rec.title || `推荐 ${recIndex + 1}`]
-    return items.map((name: string, itemIndex: number) => ({
-      id: `poi_${recIndex + 1}_${itemIndex + 1}`,
-      name,
-      type: mapRecommendationTypeToPoiType(rec.type),
-      category: rec.type || 'general',
-      location: { lat: 0, lng: 0 },
-      rating: 4.5,
-      description: buildRecommendationDescription(name, rec, itemIndex),
-      priceRange: mapPriceRange(rec.price_range),
-      openingHours: rec.best_time || '09:00-17:00'
-    }))
+    return items.map((rawItem: any, itemIndex: number) => {
+      const name = recommendationItemName(rawItem, rec, recIndex)
+      const detail = recommendationDetail(rec, rawItem, name) || findPoiByLocation(name, poiMap) || {}
+      const lat = Number(detail.lat ?? detail.latitude ?? detail.coordinates?.lat)
+      const lng = Number(detail.lng ?? detail.lon ?? detail.longitude ?? detail.coordinates?.lng)
+      const priceText = normalizeOptionalPriceText(detail.price ?? detail.price_text ?? detail.priceText)
+      return {
+        id: String(detail.id || `poi_${recIndex + 1}_${itemIndex + 1}`),
+        name,
+        type: mapRecommendationTypeToPoiType(detail.type || rec.type),
+        category: rec.type || detail.category || 'general',
+        location: {
+          lat: Number.isFinite(lat) ? lat : 0,
+          lng: Number.isFinite(lng) ? lng : 0
+        },
+        rating: Number(detail.rating) || 4.5,
+        description: detail.description || buildRecommendationDescription(name, rec, itemIndex),
+        priceRange: mapPriceRange(detail.price || detail.price_range || rec.price_range),
+        ...(priceText ? { priceText } : {}),
+        address: detail.address || '',
+        openingHours: detail.opening_hours || detail.openingHours || rec.best_time || '09:00-17:00',
+        images: normalizeImageList(detail)
+      }
+    })
   })
 }
 
@@ -140,7 +153,8 @@ const convertHotels = (hotels: any[] | undefined): POI[] => {
     priceRange: mapPriceRange(hotel.price),
     priceText: normalizePriceText(hotel.price),
     address: hotel.address || '',
-    openingHours: hotel.opening_hours || '全天'
+    openingHours: hotel.opening_hours || '全天',
+    images: normalizeImageList(hotel)
   }))
 }
 
@@ -198,6 +212,60 @@ const findPoiByLocation = (location: string, poiMap: Record<string, any>) => {
   return fuzzyKey ? poiMap[fuzzyKey] : null
 }
 
+const recommendationItemName = (item: any, rec: any, recIndex: number): string => {
+  if (typeof item === 'string') return item
+  return String(item?.name || item?.title || rec.title || `推荐 ${recIndex + 1}`).trim()
+}
+
+const recommendationDetail = (rec: any, rawItem: any, name: string) => {
+  if (rawItem && typeof rawItem === 'object') return rawItem
+  const details = [
+    ...(Array.isArray(rec.item_details) ? rec.item_details : []),
+    ...(Array.isArray(rec.itemDetails) ? rec.itemDetails : []),
+    ...(Array.isArray(rec.details) ? rec.details : [])
+  ]
+  const normalizedName = name.trim().toLowerCase()
+  return details.find((item) => {
+    const detailName = String(item?.name || item?.title || '').trim().toLowerCase()
+    return detailName && (detailName === normalizedName || detailName.includes(normalizedName) || normalizedName.includes(detailName))
+  })
+}
+
+const normalizeImageList = (source: any): string[] => {
+  const candidates = [
+    source?.image,
+    source?.image_url,
+    source?.imageUrl,
+    source?.cover,
+    source?.cover_image_url,
+    source?.coverImageUrl,
+    source?.thumbnail,
+    source?.photo,
+    ...(Array.isArray(source?.images) ? source.images : []),
+    ...(Array.isArray(source?.image_urls) ? source.image_urls : []),
+    ...(Array.isArray(source?.photos) ? source.photos.map((photo: any) => photo?.url || photo?.image_url || photo) : [])
+  ]
+  const seen = new Set<string>()
+  return candidates
+    .map(normalizeImageUrl)
+    .filter((url): url is string => {
+      if (!url || seen.has(url)) return false
+      seen.add(url)
+      return true
+    })
+}
+
+const normalizeImageUrl = (value: unknown): string => {
+  if (value && typeof value === 'object') {
+    const item = value as Record<string, any>
+    return normalizeImageUrl(item.url ?? item.image_url ?? item.imageUrl ?? item.cover ?? item.thumbnail)
+  }
+  const url = String(value || '').trim()
+  if (!url) return ''
+  if (url.startsWith('//')) return `https:${url}`
+  return url
+}
+
 const normalizeTime = (time: string | undefined): string => {
   if (!time) return '09:00'
   return String(time).split('-')[0]
@@ -214,9 +282,9 @@ const mapActivityType = (rawType: string | undefined): Activity['type'] => {
   return 'other'
 }
 
-const mapRecommendationTypeToPoiType = (rawType: string | undefined): POI['type'] => {
-  const value = (rawType || '').toLowerCase()
-  if (value.includes('美食')) return 'restaurant'
+const mapRecommendationTypeToPoiType = (rawType: unknown): POI['type'] => {
+  const value = String(rawType || '').toLowerCase()
+  if (value.includes('美食') || value.includes('餐')) return 'restaurant'
   if (value.includes('酒店') || value.includes('住宿')) return 'hotel'
   if (value.includes('博物')) return 'museum'
   if (value.includes('公园') || value.includes('自然')) return 'park'
@@ -224,12 +292,13 @@ const mapRecommendationTypeToPoiType = (rawType: string | undefined): POI['type'
   return 'attraction'
 }
 
-const mapPriceRange = (priceRange: string | undefined): POI['priceRange'] => {
-  if (!priceRange) return '$$'
-  if (priceRange.includes('免费')) return 'free'
-  if (priceRange.includes('豪华')) return '$$$$'
-  if (priceRange.includes('经济')) return '$'
-  if (/\d{3,}/.test(priceRange)) return '$$$'
+const mapPriceRange = (priceRange: unknown): POI['priceRange'] => {
+  const text = String(priceRange || '')
+  if (!text) return '$$'
+  if (text.includes('免费')) return 'free'
+  if (text.includes('豪华')) return '$$$$'
+  if (text.includes('经济')) return '$'
+  if (/\d{3,}/.test(text)) return '$$$'
   return '$$'
 }
 
@@ -240,6 +309,11 @@ const normalizePriceText = (value: unknown): string => {
   if (text.startsWith('¥') || text.startsWith('￥')) return text
   if (/^\d+(\.\d+)?$/.test(text)) return `¥${text}/晚`
   return text
+}
+
+const normalizeOptionalPriceText = (value: unknown): string | undefined => {
+  const text = String(value ?? '').trim()
+  return text ? normalizePriceText(text) : undefined
 }
 
 const normalizeTicketPrice = (activity: any, poi: any, type: Activity['type']): number | undefined => {
@@ -270,7 +344,7 @@ const buildRecommendationDescription = (name: string, rec: any, itemIndex: numbe
   const base = String(rec?.description || '').trim()
   if (base && (!Array.isArray(rec?.items) || rec.items.length <= 1)) return base
   const type = String(rec?.type || '')
-  if (type.includes('美食')) return `${name}适合安排成一顿有记忆点的本地餐食。`
+  if (type.includes('美食') || type.includes('餐')) return `${name}适合安排成一顿有记忆点的本地餐食。`
   if (type.includes('文化') || type.includes('博物')) return `${name}适合补充目的地的人文背景。`
   if (type.includes('自然') || type.includes('公园')) return `${name}适合作为一天行程里的放松段落。`
   return `${name}是这次路线里值得补充的一站，第 ${itemIndex + 1} 个推荐更适合顺路安排。`

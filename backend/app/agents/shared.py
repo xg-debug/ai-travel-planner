@@ -203,17 +203,43 @@ def build_recommendation_from_candidates(
     candidates: Sequence[Dict[str, Any]],
     reasoning: str,
 ) -> Dict[str, Any]:
-    top_items = [str(item.get("name", "")).strip() for item in list(candidates)[:5] if item.get("name")]
+    top_candidates = [item for item in list(candidates)[:5] if item.get("name")]
+    top_items = [str(item.get("name", "")).strip() for item in top_candidates]
     return {
         "type": category,
         "title": title,
         "items": top_items,
+        "item_details": [_recommendation_item_detail(item) for item in top_candidates],
         "description": f"基于 {city} 的真实查询结果筛出的 {category}候选。",
         "reasoning": reasoning,
         "best_time": "",
         "price_range": "",
         "tips": "",
     }
+
+
+def _recommendation_item_detail(item: Dict[str, Any]) -> Dict[str, Any]:
+    detail: Dict[str, Any] = {}
+    for key in (
+        "id",
+        "name",
+        "lat",
+        "lng",
+        "address",
+        "type",
+        "rating",
+        "price",
+        "description",
+        "opening_hours",
+        "best_time",
+        "tips",
+        "image_url",
+        "source",
+    ):
+        value = item.get(key)
+        if value not in (None, "", []):
+            detail[key] = value
+    return detail
 
 
 def extract_json_block(value: Any) -> Any:

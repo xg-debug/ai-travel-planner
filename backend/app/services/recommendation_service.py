@@ -138,6 +138,7 @@ class RecommendationService:
                     "type": preset["type"],
                     "title": f"{city}{preset['title']}",
                     "items": items,
+                    "item_details": [self._item_detail(item) for item in unique_candidates[:5]],
                     "description": self._build_description(city, preset["type"], unique_candidates[:3]),
                     "reasoning": self._build_reasoning(unique_candidates[:3]),
                     "best_time": preset["best_time"],
@@ -213,6 +214,29 @@ class RecommendationService:
         if not names:
             return f"基于真实搜索结果整理出的{category}推荐。"
         return f"基于{city}的真实搜索结果，优先筛出了 {', '.join(names[:3])} 等更值得优先考虑的{category}地点。"
+
+    def _item_detail(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        detail: Dict[str, Any] = {}
+        for key in (
+            "id",
+            "name",
+            "lat",
+            "lng",
+            "address",
+            "type",
+            "rating",
+            "price",
+            "description",
+            "opening_hours",
+            "best_time",
+            "tips",
+            "image_url",
+            "source",
+        ):
+            value = item.get(key)
+            if value not in (None, "", []):
+                detail[key] = value
+        return detail
 
     def _build_reasoning(self, items: List[Dict[str, Any]]) -> str:
         parts = []

@@ -88,5 +88,14 @@ export const tripApi = {
       url: '/trip/weather',
       params: { city, days }
     })
+  },
+
+  planTencentRoutes(payload: any) {
+    return request<any>({
+      url: '/trip/route/tencent',
+      method: 'POST',
+      data: payload,
+      timeout: 60000
+    })
   }
 }

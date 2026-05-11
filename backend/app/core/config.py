@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     
     # 地图服务配置
     AMAP_API_KEY: Optional[str] = os.getenv("AMAP_API_KEY")
+    TENCENT_MAP_API_KEY: Optional[str] = os.getenv("TENCENT_MAP_API_KEY")
     BAIDU_MAP_API_KEY: Optional[str] = os.getenv("BAIDU_MAP_API_KEY")
     
     # 天气服务配置

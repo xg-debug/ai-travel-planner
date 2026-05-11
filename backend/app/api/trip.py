@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.domain import travel_domain_service
 from app.services.recommendation_service import get_recommendations
 from app.services.budget_service import estimate_budget
+from app.services.tencent_map_service import tencent_map_service
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,22 @@ class RouteCalculateRequest(BaseModel):
     origin: str
     destination: str
     mode: str = "driving"
+
+
+class TencentRoutePoint(BaseModel):
+    latitude: float
+    longitude: float
+    title: Optional[str] = None
+
+
+class TencentRouteSegmentRequest(BaseModel):
+    dayIndex: int = 0
+    points: List[TencentRoutePoint] = Field(default_factory=list)
+
+
+class TencentRouteRequest(BaseModel):
+    mode: str = "driving"
+    segments: List[TencentRouteSegmentRequest] = Field(default_factory=list)
 
 
 class TripPlanPayload(BaseModel):
@@ -531,6 +548,37 @@ async def calculate_trip_route(request: RouteCalculateRequest):
     except Exception as e:
         logger.error(f"Error calculating route: {e}")
         raise HTTPException(status_code=500, detail="路线计算失败")
+
+
+@router.post("/route/tencent")
+async def calculate_tencent_trip_routes(request: TencentRouteRequest):
+    """
+    使用腾讯位置服务计算多日路线。
+
+    前端小程序原生 map 组件使用腾讯地图渲染，这里只负责把每天点位转成真实道路 polyline。
+    """
+    logger.info("Calculating Tencent routes for %s day segments by %s", len(request.segments), request.mode)
+
+    try:
+        segments = []
+        for segment in request.segments:
+            if len(segment.points) < 2:
+                continue
+            route = tencent_map_service.plan_day_route(
+                [point.model_dump() for point in segment.points],
+                request.mode,
+            )
+            segments.append({
+                "dayIndex": segment.dayIndex,
+                **route,
+            })
+        return {"mode": request.mode, "segments": segments}
+    except RuntimeError as exc:
+        logger.error("Tencent route calculation error: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        logger.error("Error calculating Tencent routes: %s", exc)
+        raise HTTPException(status_code=500, detail="腾讯地图路线规划失败，请稍后重试")
 
 @router.get("/health")
 async def health_check():

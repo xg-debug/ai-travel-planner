@@ -4,11 +4,11 @@
       v-for="(item, index) in items.slice(0, 4)"
       :key="item.id || item.name"
       class="rec-card"
-      :class="variant"
+      :class="variantClass"
       @tap="$emit('open', item)"
     >
       <view class="rec-card__visual">
-        <image :src="coverOf(item, index)" mode="aspectFill" />
+        <image :src="coverOf(item, index)" mode="aspectFill" @error="markCoverFailed(item, index)" />
         <text v-if="index < 2" class="rec-card__tag">{{ tagOf(item) }}</text>
       </view>
       <view class="rec-card__body">
@@ -24,12 +24,15 @@
 </template>
 
 <script setup lang="ts">
+import { computed, reactive } from 'vue'
 import type { POI } from '@/types/trip'
 
-defineProps<{
+const props = withDefaults(defineProps<{
   items: POI[]
   variant?: 'attraction' | 'food' | 'hotel'
-}>()
+}>(), {
+  variant: 'attraction'
+})
 
 defineEmits<{
   open: [item: POI]
@@ -50,8 +53,29 @@ const fallbackImages = {
   ]
 }
 
+const failedCovers = reactive<Record<string, boolean>>({})
+const variantClass = computed(() => props.variant)
+
 const coverOf = (item: POI, index: number) => {
-  if (item.images?.[0]) return item.images[0]
+  const image = normalizeCoverUrl(item.images?.[0])
+  if (image && !failedCovers[coverKey(item, index)]) return image
+  return fallbackOf(item, index)
+}
+
+const markCoverFailed = (item: POI, index: number) => {
+  failedCovers[coverKey(item, index)] = true
+}
+
+const coverKey = (item: POI, index: number) => `${item.id || item.name || 'poi'}_${index}`
+
+const normalizeCoverUrl = (url?: string) => {
+  const text = String(url || '').trim()
+  if (!text) return ''
+  if (text.startsWith('//')) return `https:${text}`
+  return text
+}
+
+const fallbackOf = (item: POI, index: number) => {
   const group = item.type === 'restaurant'
     ? fallbackImages.food
     : item.type === 'hotel'

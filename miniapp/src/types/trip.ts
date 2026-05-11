@@ -149,7 +149,8 @@ export interface TripResponse {
   recommendations: Array<{
     type: string
     title: string
-    items: string[]
+    items: Array<string | Record<string, any>>
+    item_details?: Array<Record<string, any>>
     description: string
     reasoning: string
     best_time: string
