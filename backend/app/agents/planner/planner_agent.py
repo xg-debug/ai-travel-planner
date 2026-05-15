@@ -7,6 +7,7 @@ from app.orchestration.task_models import (
     HOTEL_STEP,
     POI_STEP,
     REVIEWER_STEP,
+    SCORING_STEP,
     SYNTHESIZER_STEP,
     TRANSPORT_STEP,
     build_task,
@@ -16,15 +17,16 @@ def _build_food_queries(state: Dict[str, Any]) -> List[str]:
     city = state["city"]
     preferences = normalize_preferences(state.get("preferences", []) or [])
     food_queries = [
-        f"{city}本地特色早餐",
-        f"{city}老字号早餐",
+        f"{city}本地特色美食",
+        f"{city}老字号美食",
+        f"{city}代表性小吃",
         f"{city}高评分特色餐厅",
         f"{city}美食街区",
     ]
     if "food" in preferences:
-        food_queries.extend([f"{city}必吃榜餐厅", f"{city}本地人推荐餐厅"])
+        food_queries.extend([f"{city}必吃美食", f"{city}本地人推荐餐厅"])
     if "shopping" in preferences:
-        food_queries.append(f"{city}夜市步行街")
+        food_queries.append(f"{city}特色美食街区")
     return dedupe(food_queries)
 
 
@@ -60,8 +62,8 @@ def _build_execution_plan(state: Dict[str, Any], query_plan: Dict[str, Any]) -> 
         FOOD_STEP,
         "food_agent",
         "搜索餐饮候选",
-        "找出适合早餐、正餐和夜间体验的本地餐饮候选。",
-        inputs={"queries": list(query_plan.get("food_queries", []) or []), "must_have": ["早餐", "正餐", "夜生活"]},
+        "找出具有地方特色、适合顺路安排的美食、小吃和餐饮街区候选。",
+        inputs={"queries": list(query_plan.get("food_queries", []) or []), "must_have": ["本地特色", "老字号", "代表性小吃"]},
     )
     hotel_task = build_task(
         "task_hotel_search",
@@ -71,6 +73,15 @@ def _build_execution_plan(state: Dict[str, Any], query_plan: Dict[str, Any]) -> 
         "筛选出适合预算与路线衔接的酒店候选。",
         inputs={"queries": list(query_plan.get("hotel_queries", []) or []), "budget": state.get("budget", "中等")},
     )
+    scoring_task = build_task(
+        "task_score_candidates",
+        SCORING_STEP,
+        "scoring_service",
+        "候选评分排序",
+        "根据偏好、天气、预算和真实 POI 质量为景点、餐饮、酒店候选排序。",
+        inputs={"weights": "default"},
+        depends_on=[attraction_task["task_id"], food_task["task_id"], hotel_task["task_id"]],
+    )
     transport_task = build_task(
         "task_transport_plan",
         TRANSPORT_STEP,
@@ -78,7 +89,7 @@ def _build_execution_plan(state: Dict[str, Any], query_plan: Dict[str, Any]) -> 
         "评估动线与通勤",
         "结合候选地点评估路线顺畅度和推荐交通方式。",
         inputs={"mode": "driving"},
-        depends_on=[attraction_task["task_id"], food_task["task_id"], hotel_task["task_id"]],
+        depends_on=[scoring_task["task_id"]],
     )
     synthesizer_task = build_task(
         "task_synthesize_itinerary",
@@ -110,7 +121,7 @@ def _build_execution_plan(state: Dict[str, Any], query_plan: Dict[str, Any]) -> 
         depends_on=[poi_task["task_id"]],
         max_attempts=2,
     )
-    tasks = [attraction_task, food_task, hotel_task, transport_task, synthesizer_task, poi_task, reviewer_task]
+    tasks = [attraction_task, food_task, hotel_task, scoring_task, transport_task, synthesizer_task, poi_task, reviewer_task]
     return {
         "planner_version": "phase3",
         "travel_style": query_plan.get("travel_style", ""),

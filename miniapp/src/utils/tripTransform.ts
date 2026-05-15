@@ -19,7 +19,8 @@ export const mapBudgetLevel = (budget: number, days: number, travelers: number):
 }
 
 export const convertTripResponse = (response: TripResponse, request: TripRequest): Trip => {
-  const days = convertItineraryToDays(response.itinerary || [], request, response.pois || {}, response.hotels || [])
+  const dailyBudgets = response.daily_budgets || response.estimated_budget?.daily_budgets || []
+  const days = convertItineraryToDays(response.itinerary || [], request, response.pois || {}, response.hotels || [], dailyBudgets)
   const weather = convertWeatherToForecast(response.weather)
   const hotels = convertHotels(response.hotels)
   return {
@@ -36,6 +37,9 @@ export const convertTripResponse = (response: TripResponse, request: TripRequest
     },
     days,
     weather,
+    dailyBudgets,
+    riskNotices: response.risk_notices || [],
+    qualityScore: response.quality_score,
     hotels,
     recommendations: [
       ...convertRecommendations(response.recommendations || [], response.pois || {}),
@@ -52,7 +56,8 @@ const convertItineraryToDays = (
   itinerary: any[],
   request: TripRequest,
   poiMap: Record<string, any>,
-  hotels: any[] = []
+  hotels: any[] = [],
+  dailyBudgets: any[] = []
 ): TripDay[] => {
   const startDate = new Date(request.startDate)
   return itinerary.slice(0, request.days).map((dayData, dayIndex) => {
@@ -63,8 +68,12 @@ const convertItineraryToDays = (
     )
     return {
       date: dayData.date || date.toISOString().split('T')[0],
+      theme: dayData.theme || '',
+      summary: dayData.summary || '',
+      weatherAdvice: dayData.weather_advice || dayData.weatherAdvice || '',
       activities,
       hotel: normalizeDayHotel(dayData.hotel_recommendation || dayData.hotel, hotels),
+      budget: dayData.budget || dailyBudgets.find((item) => Number(item?.day) === dayIndex + 1),
       totalCost: activities.reduce((sum: number, item: Activity) => sum + Number(item.cost || 0), 0)
     }
   }).filter((day) => day.activities.length || day.hotel)
@@ -196,6 +205,9 @@ const normalizeActivity = (
     ticketPrice,
     ticketLabel: buildTicketLabel(activity, poi, ticketPrice),
     notes: activity.tips || poi?.tips || activity.transportation,
+    reason: activity.reason || activity.recommendation_reason || '',
+    score: Number(activity.score) || undefined,
+    scoreFactors: activity.score_factors || activity.scoreFactors,
     image: activity.image || activity.image_url || poi?.image_url,
     coordinates: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : undefined
   }

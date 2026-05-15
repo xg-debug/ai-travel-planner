@@ -27,6 +27,9 @@ export interface Activity {
   ticketPrice?: number
   ticketLabel?: string
   notes?: string
+  reason?: string
+  score?: number
+  scoreFactors?: Record<string, number>
   image?: string
   coordinates?: {
     lat: number
@@ -44,10 +47,31 @@ export interface HotelRecommendation {
 
 export interface TripDay {
   date: string
+  theme?: string
+  summary?: string
+  weatherAdvice?: string
   activities: Activity[]
   hotel?: HotelRecommendation
+  budget?: DailyBudget
   notes?: string
   totalCost?: number
+}
+
+export interface DailyBudget {
+  day: number
+  date?: string
+  total: number
+  categories: Record<string, number>
+  risk?: string
+}
+
+export interface RiskNotice {
+  type: string
+  level: 'low' | 'medium' | 'high' | string
+  title: string
+  content: string
+  related_day?: number | null
+  related_place?: string
 }
 
 export interface WeatherForecast {
@@ -113,6 +137,9 @@ export interface Trip {
   recommendations: POI[]
   hotels?: POI[]
   budget: BudgetBreakdown
+  dailyBudgets?: DailyBudget[]
+  riskNotices?: RiskNotice[]
+  qualityScore?: Record<string, number>
   plan?: string
   createdAt: string
   updatedAt: string
@@ -175,7 +202,12 @@ export interface TripResponse {
     days: number
     activity_adjustment: number
     tips: string[]
+    daily_budgets?: DailyBudget[]
   }
+  daily_budgets?: DailyBudget[]
+  risk_notices?: RiskNotice[]
+  weather_impacts?: Array<Record<string, any>>
+  quality_score?: Record<string, number>
 }
 
 export interface PlanTripRequest {
@@ -184,6 +216,7 @@ export interface PlanTripRequest {
   days: number
   preferences?: string[]
   budget?: string
+  budget_amount?: number
   travelers?: number
   start_date?: string
 }

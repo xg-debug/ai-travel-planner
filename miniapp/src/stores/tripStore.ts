@@ -19,15 +19,17 @@ const DRAFT_KEY = 'cybertravel_plan_draft'
 
 const buildSteps = (): GenerationStep[] => [
   { key: 'planner_agent', label: '拆解旅行需求', status: 'pending' },
+  { key: 'weather_tool', label: '获取天气', status: 'pending' },
   { key: 'attraction_agent', label: '搜索景点', status: 'pending' },
   { key: 'food_agent', label: '安排餐饮', status: 'pending' },
   { key: 'hotel_agent', label: '推荐住宿', status: 'pending' },
+  { key: 'scoring', label: '评分排序', status: 'pending' },
   { key: 'transport_agent', label: '评估动线', status: 'pending' },
   { key: 'synthesizer_agent', label: '生成每日行程', status: 'pending' },
   { key: 'poi_agent', label: '补全地点信息', status: 'pending' },
   { key: 'reviewer_agent', label: '审查行程质量', status: 'pending' },
-  { key: 'weather_tool', label: '获取天气', status: 'pending' },
   { key: 'budget', label: '计算预算', status: 'pending' },
+  { key: 'risk_notice', label: '生成提醒', status: 'pending' },
   { key: 'summary', label: '整理结果', status: 'pending' }
 ]
 
@@ -107,6 +109,7 @@ export const useTripStore = defineStore('trip', () => {
         days: draft.value.days,
         preferences: draft.value.interests,
         budget: mapBudgetLevel(draft.value.budget, draft.value.days, draft.value.travelers),
+        budget_amount: draft.value.budget,
         travelers: draft.value.travelers,
         start_date: draft.value.startDate
       }

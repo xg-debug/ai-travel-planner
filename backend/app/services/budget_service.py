@@ -67,6 +67,7 @@ class BudgetService:
 
         base_budget = self.budget_levels.get(budget_level, self.budget_levels["中等"])
         breakdown = self._calculate_breakdown_from_itinerary(itinerary, travelers, base_budget)
+        daily_budgets = self._calculate_daily_budgets(itinerary, travelers, base_budget)
         total = sum(int(value) for value in breakdown.values())
         activity_adjustment = self._calculate_activity_adjustment(itinerary)
         
@@ -75,6 +76,7 @@ class BudgetService:
             "per_person": int(total / travelers) if travelers > 0 else int(total),
             "per_day": int(total / days) if days > 0 else int(total),
             "breakdown": breakdown,
+            "daily_budgets": daily_budgets,
             "currency": "CNY",
             "budget_level": budget_level,
             "travelers": travelers,
@@ -158,6 +160,59 @@ class BudgetService:
             breakdown["shopping"] = float(base_budget["shopping"]) * travelers * days * 0.4
 
         return {key: int(round(value)) for key, value in breakdown.items()}
+
+    def _calculate_daily_budgets(
+        self,
+        itinerary: List[Dict[str, Any]],
+        travelers: int,
+        base_budget: Dict[str, int],
+    ) -> List[Dict[str, Any]]:
+        daily: List[Dict[str, Any]] = []
+        for index, day in enumerate(itinerary or []):
+            categories = {
+                "accommodation": 0.0,
+                "food": 0.0,
+                "transportation": 0.0,
+                "tickets": 0.0,
+                "shopping": 0.0,
+            }
+            hotel = day.get("hotel_recommendation") or day.get("hotel") or {}
+            hotel_price = self._safe_number(hotel.get("price_estimate") or hotel.get("priceEstimate") or hotel.get("price"))
+            categories["accommodation"] = hotel_price if hotel_price > 0 else float(base_budget["accommodation"]) * travelers
+
+            for activity in day.get("activities", []) or []:
+                explicit_cost = self._safe_number(activity.get("cost_estimate") or activity.get("cost"))
+                ticket_price = self._safe_number(activity.get("ticket_price") or activity.get("ticketPrice"))
+                category = self._get_activity_category(activity)
+                if category == "food":
+                    categories["food"] += explicit_cost or float(base_budget["food"])
+                elif category == "transportation":
+                    categories["transportation"] += explicit_cost or float(base_budget["transportation"]) * 0.5
+                elif category == "shopping":
+                    categories["shopping"] += explicit_cost or float(base_budget["shopping"]) * 0.3
+                else:
+                    categories["tickets"] += ticket_price if ticket_price > 0 else explicit_cost
+
+            if categories["food"] <= 0:
+                categories["food"] = float(base_budget["food"]) * travelers
+            if categories["transportation"] <= 0:
+                categories["transportation"] = float(base_budget["transportation"]) * travelers
+            if categories["tickets"] <= 0:
+                categories["tickets"] = float(base_budget["tickets"]) * travelers * 0.7
+            if categories["shopping"] <= 0:
+                categories["shopping"] = float(base_budget["shopping"]) * travelers * 0.2
+
+            rounded = {key: int(round(value)) for key, value in categories.items()}
+            daily.append(
+                {
+                    "day": int(day.get("day") or index + 1),
+                    "date": day.get("date"),
+                    "total": sum(rounded.values()),
+                    "categories": rounded,
+                    "risk": "normal",
+                }
+            )
+        return daily
     
     def _calculate_activity_adjustment(self, itinerary: List[Dict[str, Any]]) -> float:
         """根据活动类型计算预算调整系数"""

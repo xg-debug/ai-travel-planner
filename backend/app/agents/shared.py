@@ -90,7 +90,7 @@ def build_query_agent_fallback(state: Dict[str, Any]) -> Dict[str, Any]:
         attraction_queries.append(f"{city}亲子景点")
 
     hotel_queries = [f"{city}市中心酒店", f"{city}交通便利酒店", f"{city}高评分酒店"]
-    food_queries = [f"{city}本地特色早餐", f"{city}高评分特色餐厅", f"{city}老字号美食", f"{city}夜市步行街"]
+    food_queries = [f"{city}本地特色美食", f"{city}老字号美食", f"{city}代表性小吃", f"{city}高评分特色餐厅", f"{city}美食街区"]
 
     travel_style_parts: List[str] = []
     if "food" in preferences:
@@ -320,6 +320,8 @@ def normalize_itinerary(plan: Sequence[Dict[str, Any]], state: Dict[str, Any]) -
                 "date": (start + timedelta(days=idx)).isoformat() if start else day.get("date"),
                 "theme": str(day.get("theme", "")).strip(),
                 "summary": str(day.get("summary", "")).strip(),
+                "weather_advice": str(day.get("weather_advice", "") or day.get("weatherAdvice", "")).strip(),
+                "budget": day.get("budget"),
                 "hotel_recommendation": day.get("hotel_recommendation"),
                 "activities": activities,
             }
@@ -333,6 +335,8 @@ def normalize_itinerary(plan: Sequence[Dict[str, Any]], state: Dict[str, Any]) -
                 "date": (start + timedelta(days=idx)).isoformat() if start else None,
                 "theme": "",
                 "summary": "",
+                "weather_advice": "",
+                "budget": None,
                 "hotel_recommendation": None,
                 "activities": [],
             }

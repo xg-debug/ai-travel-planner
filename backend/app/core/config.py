@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     ENABLE_LLM_RECOMMENDATION: bool = os.getenv("ENABLE_LLM_RECOMMENDATION", "false").lower() == "true"
     
     # 行程规划配置
-    MAX_TRIP_DAYS: int = 30
+    MAX_TRIP_DAYS: int = int(os.getenv("MAX_TRIP_DAYS", "7"))
     MAX_ACTIVITIES_PER_DAY: int = 6
     MIN_ACTIVITY_DURATION: int = 30  # 分钟
     

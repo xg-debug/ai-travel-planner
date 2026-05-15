@@ -20,6 +20,7 @@ from app.services.recommendation_service import get_recommendations
 from app.services.budget_service import estimate_budget
 from app.services.tencent_map_service import tencent_map_service
 from app.core.config import settings
+from app.services.travel_intent import normalize_trip_city_and_query
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -81,12 +82,14 @@ class TripPlanPayload(BaseModel):
 
 
 def _to_state(request: TripRequest) -> Dict[str, Any]:
+    normalized = normalize_trip_city_and_query(request.city, request.query)
     return {
-        "query": request.query,
-        "city": request.city,
+        "query": normalized["query"],
+        "city": normalized["city"],
         "days": request.days,
         "preferences": request.preferences or [],
         "budget": request.budget or "中等",
+        "budget_amount": request.budget_amount or 0,
         "travelers": request.travelers or 1,
         "start_date": request.start_date,
     }
@@ -101,17 +104,22 @@ def _to_response(result: Dict[str, Any]) -> TripResponse:
         recommendations=result.get("recommendations"),
         hotels=result.get("hotel_options"),
         estimated_budget=result.get("estimated_budget"),
+        daily_budgets=result.get("daily_budgets"),
+        risk_notices=result.get("risk_notices"),
+        weather_impacts=result.get("weather_impacts"),
+        quality_score=result.get("quality_score"),
     )
 
 
-def _validate_trip_request(request: TripRequest) -> None:
-    if not request.city:
+def _validate_trip_state(state: Dict[str, Any]) -> None:
+    if not state.get("city"):
         raise ValueError("目的地城市不能为空")
-    if not request.query:
+    if not state.get("query"):
         raise ValueError("旅行需求不能为空")
-    if not request.days or request.days <= 0:
+    days = int(state.get("days") or 0)
+    if days <= 0:
         raise ValueError("旅行天数必须大于0")
-    if request.days > settings.MAX_TRIP_DAYS:
+    if days > settings.MAX_TRIP_DAYS:
         raise ValueError(f"旅行天数不能超过{settings.MAX_TRIP_DAYS}天")
 
 
@@ -146,11 +154,12 @@ async def plan_trip(request: TripRequest):
     Returns:
         旅行计划结果
     """
-    logger.info(f"Planning trip: {request.city} for {request.days} days")
+    state = _to_state(request)
+    logger.info("Planning trip: %s for %s days", state["city"], state["days"])
     
     try:
-        _validate_trip_request(request)
-        result = app_trip_graph.invoke(_to_state(request))
+        _validate_trip_state(state)
+        result = app_trip_graph.invoke(state)
         response = _to_response(result)
 
         if not response.itinerary:
@@ -293,24 +302,28 @@ def delete_trip_plan(
 
 @router.post("/plan/stream")
 async def plan_trip_stream(request: TripRequest):
-    logger.info("Streaming plan request: %s %s days", request.city, request.days)
+    state = _to_state(request)
+    logger.info("Streaming plan request: %s %s days", state["city"], state["days"])
 
     async def event_generator():
-        state = _to_state(request)
         try:
-            _validate_trip_request(request)
+            _validate_trip_state(state)
             loop_count = 0
 
             yield _sse("status", {"step": "planner_agent", "message": TASK_STEP_MESSAGES.get("planner_agent", "理解旅行需求并拆分执行任务")})
             await asyncio.sleep(0)
             state.update(trip_planner.nodes["planner_agent"](state))
 
+            yield _sse("status", {"step": "weather_tool", "message": "通过天气工具获取天气信息"})
+            await asyncio.sleep(0)
+            state.update(trip_planner.nodes["weather_tool"](state))
+
             while True:
                 loop_count += 1
                 if loop_count > 64:
                     raise RuntimeError("任务工作流执行次数超过上限，疑似进入循环。")
                 next_step = route_next_step(state)
-                if next_step == "weather_tool":
+                if next_step == "budget":
                     break
                 if next_step == "workflow_error":
                     yield _sse("status", {"step": "workflow_error", "message": "任务调度出现阻塞，正在中止本次规划"})
@@ -345,13 +358,13 @@ async def plan_trip_stream(request: TripRequest):
                         },
                     )
 
-            yield _sse("status", {"step": "weather_tool", "message": "通过天气工具获取天气信息"})
-            await asyncio.sleep(0)
-            state.update(trip_planner.nodes["weather_tool"](state))
-
             yield _sse("status", {"step": "budget", "message": "计算预算"})
             await asyncio.sleep(0)
             state.update(trip_planner.nodes["budget"](state))
+
+            yield _sse("status", {"step": "risk_notice", "message": "生成避坑提醒"})
+            await asyncio.sleep(0)
+            state.update(trip_planner.nodes["risk_notice"](state))
 
             yield _sse("status", {"step": "summary", "message": "整理最终输出"})
             await asyncio.sleep(0)

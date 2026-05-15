@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 from app.agents.shared import build_source_metadata, filter_real_candidates, normalize_itinerary
 from app.orchestration.task_models import build_task_result
 from app.orchestration.task_router import complete_task, get_ready_task_for_step
+from app.services.weather_impact_service import weather_impact_service
 from app.tools.amap_tools import search_hotels_tool, search_pois_tool
 
 logger = logging.getLogger(__name__)
@@ -71,14 +72,46 @@ def _build_activity(candidate: Dict[str, Any], time_text: str, title_suffix: str
         "type": activity_type,
         "location": name,
         "duration": 90,
-        "cost_estimate": 0,
-        "ticket_price": 0,
+        "cost_estimate": _safe_activity_cost(candidate, activity_type),
+        "ticket_price": _safe_ticket_price(candidate, activity_type),
         "tips": str(candidate.get("tips", "")).strip(),
         "transportation": "步行/公共交通/网约车",
         "image": candidate.get("image_url"),
+        "reason": candidate.get("reason", ""),
+        "score": candidate.get("score"),
+        "score_factors": candidate.get("score_factors", {}),
+        "opening_hours": candidate.get("opening_hours", ""),
     }
     activity.update(build_source_metadata(candidate))
     return activity
+
+
+def _safe_number(value: Any) -> float:
+    try:
+        if value in (None, ""):
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        import re
+
+        matched = re.search(r"\d+(?:\.\d+)?", str(value))
+        return float(matched.group()) if matched else 0.0
+    except Exception:
+        return 0.0
+
+
+def _safe_activity_cost(candidate: Dict[str, Any], activity_type: str) -> int:
+    price = _safe_number(candidate.get("price"))
+    if "美食" in activity_type or "餐" in activity_type:
+        return int(price or 100)
+    return int(price if price and price < 300 else 0)
+
+
+def _safe_ticket_price(candidate: Dict[str, Any], activity_type: str) -> int:
+    if "美食" in activity_type or "餐" in activity_type:
+        return 0
+    price = _safe_number(candidate.get("price"))
+    return int(price if price and price < 300 else 0)
 
 
 def _build_day_summary(activities: List[Dict[str, Any]], hotel: Dict[str, Any] | None) -> str:
@@ -114,21 +147,21 @@ def _build_real_itinerary(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     days = int(state["days"])
     city = state["city"]
     attractions = _supplement_real_candidates(
-        list(state.get("attraction_candidates", []) or []),
+        list(state.get("scored_attractions") or state.get("attraction_candidates", []) or []),
         city=city,
         queries=[f"{city}热门景点", f"{city}城市地标", f"{city}博物馆", f"{city}历史街区"],
         search_fn=search_pois_tool,
         min_count=2,
     )
     foods = _supplement_real_candidates(
-        list(state.get("food_candidates", []) or []),
+        list(state.get("scored_foods") or state.get("food_candidates", []) or []),
         city=city,
-        queries=[f"{city}本地特色早餐", f"{city}高评分特色餐厅", f"{city}老字号美食", f"{city}夜市步行街"],
+        queries=[f"{city}本地特色美食", f"{city}老字号美食", f"{city}代表性小吃", f"{city}高评分特色餐厅", f"{city}美食街区"],
         search_fn=search_pois_tool,
         min_count=2,
     )
     hotels = _supplement_real_candidates(
-        list(state.get("hotel_options", []) or []),
+        list(state.get("scored_hotels") or state.get("hotel_options", []) or []),
         city=city,
         queries=[f"{city}市中心酒店", f"{city}交通便利酒店", f"{city}高评分酒店"],
         search_fn=search_hotels_tool,
@@ -149,29 +182,29 @@ def _build_real_itinerary(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     used_attraction_names: set[str] = set()
 
     for index in range(days):
-        breakfast = foods[index % len(foods)]
-        lunch = foods[(index + 1) % len(foods)]
+        feature_food = foods[index % len(foods)]
+        secondary_food = foods[(index + 1) % len(foods)]
         morning = _pop_next_unique(remaining_attractions, used_attraction_names)
         afternoon = _pop_next_unique(remaining_attractions, used_attraction_names)
         evening_attraction = _pop_next_unique(remaining_attractions, used_attraction_names)
-        fallback_food = remaining_foods[(index + 2) % len(remaining_foods)] if remaining_foods else foods[(index + 2) % len(foods)]
-        evening = evening_attraction or fallback_food
+        evening = evening_attraction
         hotel = hotels[index % len(hotels)]
-        evening_is_attraction = bool(evening_attraction)
 
-        activities = [_build_activity(breakfast, "08:00-09:00", "早餐", "美食餐饮")]
+        weather_advice = weather_impact_service.build_weather_advice(index, state.get("weather_impacts", []) or [])
+        activities: List[Dict[str, Any]] = []
         if morning:
             activities.append(_build_activity(morning, "09:30-11:30", "", "景点游览"))
-        activities.append(_build_activity(lunch, "12:00-13:30", "午餐", "美食餐饮"))
+        activities.append(_build_activity(feature_food, "12:00-13:30", "当地特色美食", "美食餐饮"))
         if afternoon:
             activities.append(_build_activity(afternoon, "14:00-17:00", "", "景点游览"))
+        activities.append(_build_activity(secondary_food, "17:30-19:00", "顺路美食补给", "美食餐饮"))
         if evening:
             activities.append(
                 _build_activity(
                     evening,
-                    "18:00-20:00",
-                    "晚间安排" if evening_is_attraction else "晚餐",
-                    "休闲体验" if evening_is_attraction else "美食餐饮",
+                    "19:30-21:00",
+                    "晚间安排",
+                    "休闲体验",
                 )
             )
 
@@ -181,11 +214,13 @@ def _build_real_itinerary(state: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "date": _parse_date(state.get("start_date"), index),
                 "theme": f"{state['city']}真实地点串联游",
                 "summary": _build_day_summary(activities, hotel),
+                "weather_advice": weather_advice,
                 "hotel_recommendation": {
                     "name": hotel.get("name", ""),
                     "price_estimate": hotel.get("price"),
                     "address": hotel.get("address", ""),
-                    "reason": "基于真实酒店搜索结果选择的住宿候选。",
+                    "reason": hotel.get("reason") or "基于真实酒店搜索结果选择的住宿候选。",
+                    "score": hotel.get("score"),
                     "source": hotel.get("source", ""),
                     "source_id": hotel.get("id", ""),
                 },

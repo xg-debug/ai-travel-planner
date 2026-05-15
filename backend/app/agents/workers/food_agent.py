@@ -22,7 +22,7 @@ class FoodReActAgent(BaseReActAgent):
 
     def expand_query(self, query: str, city: str) -> List[str]:
         variants = normalize_search_query(query, city) or [query]
-        variants.extend([f"{city}早餐", f"{city}本地小吃", f"{city}特色餐厅"])
+        variants.extend([f"{city}本地特色美食", f"{city}老字号美食", f"{city}代表性小吃", f"{city}特色餐厅"])
         return dedupe(variants)
 
     def _score_food_candidate(self, item: Dict[str, Any], city: str, query: str) -> float:
@@ -34,7 +34,7 @@ class FoodReActAgent(BaseReActAgent):
         searchable = f"{name} {type_text} {address}".lower()
         query_text = str(query or "").strip().lower()
 
-        food_markers = ("餐饮", "餐厅", "小吃", "早餐", "面馆", "饭店", "食府", "夜市", "咖啡", "茶馆")
+        food_markers = ("餐饮", "餐厅", "小吃", "面馆", "饭店", "食府", "夜市", "咖啡", "茶馆")
         local_markers = ("本地", "特色", "老字号", "必吃", "人气", "传统", "风味")
         chain_markers = ("旗舰店", "分店", "连锁", "店")
 
@@ -42,9 +42,11 @@ class FoodReActAgent(BaseReActAgent):
             score += 1.5
         if any(marker in searchable for marker in local_markers):
             score += 0.8
-        if "早餐" in query_text and any(marker in searchable for marker in ("早餐", "早茶", "面馆", "包子", "粥")):
-            score += 1.0
-        if "夜" in query_text and any(marker in searchable for marker in ("夜市", "酒吧", "烧烤", "步行街")):
+        if any(marker in query_text for marker in ("特色", "小吃", "老字号", "必吃")) and any(
+            marker in searchable for marker in ("特色", "小吃", "老字号", "风味", "传统", "必吃")
+        ):
+            score += 1.2
+        if "美食街" in query_text and any(marker in searchable for marker in ("夜市", "步行街", "美食街", "小吃街")):
             score += 1.0
         if opening_hours:
             score += 0.3
@@ -98,7 +100,7 @@ def food_search_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     city = state["city"]
     task = get_ready_task_for_step(state, "food_agent")
     task_inputs = task.get("inputs", {}) if task else {}
-    queries = task_inputs.get("queries") or [f"{city}本地特色早餐", f"{city}高评分特色餐厅", f"{city}夜市步行街"]
+    queries = task_inputs.get("queries") or [f"{city}本地特色美食", f"{city}老字号美食", f"{city}代表性小吃", f"{city}美食街区"]
     react_result = food_react_agent.run(state, queries, task=task)
     candidates = _dedupe_food_candidates(filter_real_candidates(react_result["items"]))
     recommendations = list(state.get("recommendations", []) or [])
@@ -109,7 +111,7 @@ def food_search_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 f"{city}餐饮建议",
                 "美食",
                 candidates,
-                "已通过 ReAct 搜索循环筛选早餐、正餐和夜间美食候选，优先保留更有地方特色的餐饮地点。",
+                "已通过 ReAct 搜索循环筛选本地特色美食、老字号、小吃和餐饮街区，优先保留更有地方代表性的餐饮地点。",
             )
         )
     return {

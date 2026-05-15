@@ -15,9 +15,10 @@ def _issue(issue_type: str, severity: str, day: int | None, message: str) -> Dic
     ).model_dump()
 
 
-def _review_itinerary(plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _review_itinerary(plan: List[Dict[str, Any]], state: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
     issues: List[Dict[str, Any]] = []
     seen_locations: set[str] = set()
+    weather_impacts = list((state or {}).get("weather_impacts", []) or [])
     for day in plan:
         day_no = int(day.get("day") or 0) or None
         activities = day.get("activities", []) or []
@@ -44,9 +45,37 @@ def _review_itinerary(plan: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             if location:
                 seen_locations.add(location)
 
+            if day_no and 0 < day_no <= len(weather_impacts):
+                impact = weather_impacts[day_no - 1]
+                if impact.get("condition_type") in {"rain", "snow", "fog", "hot", "wind"}:
+                    if any(token in text for token in ("海", "公园", "山", "户外", "风景", "沙滩", "步道")):
+                        issues.append(
+                            _issue(
+                                "weather_conflict",
+                                "minor",
+                                day_no,
+                                f"天气可能影响户外地点：{location or activity.get('title', '')}",
+                            )
+                        )
+
         if food_hits == 0:
             issues.append(_issue("missing_food", "minor", day_no, "当天缺少明确餐饮活动"))
     return issues
+
+
+def _quality_score(plan: List[Dict[str, Any]], issues: List[Dict[str, Any]], state: Dict[str, Any]) -> Dict[str, Any]:
+    major = len([issue for issue in issues if issue.get("severity") == "major"])
+    minor = len(issues) - major
+    total = max(0, 100 - major * 12 - minor * 4)
+    return {
+        "total": total,
+        "reality": 90 if plan else 0,
+        "route": 78 if state.get("transport_plan", {}).get("legs") else 65,
+        "preference": 82,
+        "time": max(60, 90 - major * 10),
+        "budget": 76,
+        "explainability": 88,
+    }
 
 
 def _classify_activity_category(activity: Dict[str, Any]) -> str:
@@ -196,9 +225,9 @@ def _needs_rerun(issues: List[Dict[str, Any]], patch_actions: List[Dict[str, Any
 def reviewer_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     draft_plan = state.get("plan") or state.get("draft_plan") or []
     reviewed_plan = normalize_itinerary(draft_plan, state)
-    review_issues = _review_itinerary(reviewed_plan)
+    review_issues = _review_itinerary(reviewed_plan, state)
     patched_plan, patch_actions = _patch_itinerary(reviewed_plan, state, review_issues)
-    post_patch_issues = _review_itinerary(patched_plan)
+    post_patch_issues = _review_itinerary(patched_plan, state)
     reflection_history = list(state.get("reflection_history", []) or [])
 
     rerun_required = _needs_rerun(post_patch_issues, patch_actions, state)
@@ -221,6 +250,7 @@ def reviewer_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "plan": patched_plan,
         "reviewed_plan": patched_plan,
         "review_issues": post_patch_issues,
+        "quality_score": _quality_score(patched_plan, post_patch_issues, state),
         "reflection_history": reflection_history,
     }
 

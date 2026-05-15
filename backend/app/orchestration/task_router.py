@@ -8,6 +8,7 @@ TASK_STEP_MESSAGES = {
     "attraction_agent": "搜索评分较高的真实景点",
     "food_agent": "搜索本地特色餐饮候选",
     "hotel_agent": "推荐适合路线的酒店",
+    "scoring": "根据偏好、天气、预算和路线为候选排序",
     "transport_agent": "评估地点之间的动线与通勤",
     "synthesizer_agent": "整合多类候选并生成行程",
     "poi_agent": "补全景点坐标、图片与故事",
@@ -70,7 +71,7 @@ def route_next_step(state: Dict[str, Any]) -> str:
     pending_tasks = [task for task in (state.get("tasks", []) or []) if task.get("status") == "pending"]
     if pending_tasks:
         return "workflow_error"
-    return "weather_tool"
+    return "budget"
 
 
 def complete_task(state: Dict[str, Any], step: str, result: Dict[str, Any] | None = None) -> Dict[str, Any]:

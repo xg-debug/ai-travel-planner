@@ -13,7 +13,7 @@ from app.agents import (
     synthesizer_agent_node,
     transport_agent_node,
 )
-from app.graph.nodes import budget_node, summary_node, weather_tool_step, workflow_error_node
+from app.graph.nodes import budget_node, risk_notice_node, scoring_node, summary_node, weather_tool_step, workflow_error_node
 from app.graph.state import TripState
 from app.orchestration.task_router import get_ready_tasks, route_next_step, task_router_node
 
@@ -26,6 +26,7 @@ NODE_REGISTRY = {
     "attraction_agent": attraction_search_agent_node,
     "food_agent": food_search_agent_node,
     "hotel_agent": hotel_react_agent_node,
+    "scoring": scoring_node,
     "transport_agent": transport_agent_node,
     "synthesizer_agent": synthesizer_agent_node,
     "poi_agent": poi_detail_agent_node,
@@ -33,6 +34,7 @@ NODE_REGISTRY = {
     "workflow_error": workflow_error_node,
     "weather_tool": weather_tool_step,
     "budget": budget_node,
+    "risk_notice": risk_notice_node,
     "summary": summary_node,
 }
 
@@ -111,7 +113,8 @@ def build_trip_graph():
         workflow.add_node(name, node)
 
     workflow.set_entry_point("planner_agent")
-    workflow.add_edge("planner_agent", "task_router")
+    workflow.add_edge("planner_agent", "weather_tool")
+    workflow.add_edge("weather_tool", "task_router")
     workflow.add_conditional_edges(
         "task_router",
         route_next_step,
@@ -119,26 +122,28 @@ def build_trip_graph():
             "attraction_agent": "attraction_agent",
             "food_agent": "food_agent",
             "hotel_agent": "hotel_agent",
+            "scoring": "scoring",
             "parallel_tasks": "parallel_tasks",
             "transport_agent": "transport_agent",
             "synthesizer_agent": "synthesizer_agent",
             "poi_agent": "poi_agent",
             "reviewer_agent": "reviewer_agent",
             "workflow_error": "workflow_error",
-            "weather_tool": "weather_tool",
+            "budget": "budget",
         },
     )
     workflow.add_edge("attraction_agent", "task_router")
     workflow.add_edge("food_agent", "task_router")
     workflow.add_edge("hotel_agent", "task_router")
+    workflow.add_edge("scoring", "task_router")
     workflow.add_edge("parallel_tasks", "task_router")
     workflow.add_edge("transport_agent", "task_router")
     workflow.add_edge("synthesizer_agent", "task_router")
     workflow.add_edge("poi_agent", "task_router")
     workflow.add_edge("reviewer_agent", "task_router")
     workflow.add_edge("workflow_error", END)
-    workflow.add_edge("weather_tool", "budget")
-    workflow.add_edge("budget", "summary")
+    workflow.add_edge("budget", "risk_notice")
+    workflow.add_edge("risk_notice", "summary")
     workflow.add_edge("summary", END)
 
     return workflow.compile()

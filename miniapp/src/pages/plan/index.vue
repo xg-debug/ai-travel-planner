@@ -110,6 +110,7 @@ import { computed, onMounted, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useTripStore } from '@/stores/tripStore'
 import { addDays, calculateDays, formatDate, todayText } from '@/utils/format'
+import { parseTravelIntent } from '@/utils/travelIntent'
 
 const tripStore = useTripStore()
 const today = todayText()
@@ -182,15 +183,24 @@ const submit = () => {
     uni.showToast({ title: '请填写目的地和预算', icon: 'none' })
     return
   }
+  const intent = parseTravelIntent(destination.value)
+  if (!intent.destination) {
+    uni.showToast({ title: '请写清目的地城市，如深圳海边两日游', icon: 'none' })
+    return
+  }
+  if (days.value > 7) {
+    uni.showToast({ title: '当前仅支持 1-7 天游', icon: 'none' })
+    return
+  }
   tripStore.setDraft({
-    destination: destination.value.trim(),
+    destination: intent.destination,
     startDate: startDate.value,
     endDate: endDate.value,
     days: days.value,
     travelers: travelers.value,
     interests: interests.value,
     budget: totalBudget.value,
-    additionalRequirements: ''
+    additionalRequirements: intent.additionalRequirements
   })
   uni.navigateTo({ url: '/pages/generating/index' })
 }

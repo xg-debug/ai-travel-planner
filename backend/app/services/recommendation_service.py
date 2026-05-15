@@ -31,11 +31,11 @@ class RecommendationService:
         },
         "food": {
             "type": "美食",
-            "title": "本地餐饮推荐",
-            "queries": ["本地特色餐厅", "老字号", "小吃"],
-            "best_time": "午餐和晚餐",
+            "title": "本地特色美食推荐",
+            "queries": ["本地特色美食", "老字号美食", "代表性小吃", "美食街区"],
+            "best_time": "按当天路线顺路安排",
             "price_range": "中等",
-            "tips": "建议错峰用餐，并优先选择评分较高的餐饮点。",
+            "tips": "优先选择有地方代表性的美食、小吃或老字号，并结合当天路线顺路安排。",
             "source": "poi",
         },
         "nature": {
