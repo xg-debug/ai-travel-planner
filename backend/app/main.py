@@ -8,6 +8,7 @@ import os
 from app.api.trip import router as trip_router
 from app.api.auth import router as auth_router
 from app.api.users import router as users_router
+from app.api.admin import router as admin_router
 from app.core.database import Base, engine
 import app.models  # noqa: F401
 from app.core.config import settings
@@ -39,6 +40,7 @@ if os.path.exists(settings.UPLOAD_DIR):
 app.include_router(trip_router, prefix="/api/trip", tags=["trip"])
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(users_router, prefix="/api/users", tags=["users"])
+app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
 
 
 @app.on_event("startup")

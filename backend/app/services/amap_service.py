@@ -2,7 +2,7 @@ import requests
 import logging
 import re
 from typing import List, Dict, Any, Optional
-from app.core.config import settings
+from app.services.runtime_config import get_map_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +101,11 @@ class AMapService:
     """高德地图服务"""
     
     def __init__(self):
-        self.api_key = settings.AMAP_API_KEY
         self.base_url = "https://restapi.amap.com/v3"
+
+    @property
+    def api_key(self) -> Optional[str]:
+        return get_map_api_key("amap")
         
     def search_pois(
         self,

@@ -7,12 +7,15 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import and_, select
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import create_access_token, hash_password, validate_password, verify_password
+from app.models.admin import UserActivityEvent
 from app.models.user import PasswordResetToken, User
+from app.services.user_roles import ROLE_SUPER_ADMIN, ROLE_USER, ensure_user_role, get_user_role
 
 
 router = APIRouter()
@@ -37,6 +40,7 @@ class UserDTO(BaseModel):
     email: EmailStr
     name: str
     avatar: str | None = None
+    role: str = ROLE_USER
     createdAt: datetime
 
 
@@ -60,12 +64,13 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=6, max_length=128)
 
 
-def _to_user_dto(user: User) -> UserDTO:
+def _to_user_dto(user: User, db: Session) -> UserDTO:
     return UserDTO(
         id=user.id,
         email=user.email,
         name=user.name,
         avatar=user.avatar_url,
+        role=get_user_role(db, user),
         createdAt=user.created_at,
     )
 
@@ -82,6 +87,7 @@ def register(request: RegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     display_name = request.name.strip() if request.name and request.name.strip() else request.email.split("@")[0]
+    is_first_user = db.execute(select(func.count(User.id))).scalar_one() == 0
 
     user = User(
         email=request.email,
@@ -90,6 +96,8 @@ def register(request: RegisterRequest, db: Session = Depends(get_db)):
     )
     db.add(user)
     db.flush()
+    ensure_user_role(db, user, ROLE_SUPER_ADMIN if is_first_user else ROLE_USER)
+    db.add(UserActivityEvent(user_id=user.id, event_type="register"))
 
     db.commit()
     db.refresh(user)
@@ -100,7 +108,7 @@ def register(request: RegisterRequest, db: Session = Depends(get_db)):
         else settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
     token = create_access_token(user.id, expires_minutes=token_expire_minutes)
-    return AuthResponse(user=_to_user_dto(user), token=token, token_expires_in_minutes=token_expire_minutes)
+    return AuthResponse(user=_to_user_dto(user, db), token=token, token_expires_in_minutes=token_expire_minutes)
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -111,6 +119,7 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
 
     user.last_login_at = datetime.utcnow()
     db.add(user)
+    db.add(UserActivityEvent(user_id=user.id, event_type="login"))
     db.commit()
     db.refresh(user)
 
@@ -120,7 +129,7 @@ def login(request: LoginRequest, db: Session = Depends(get_db)):
         else settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
     token = create_access_token(user.id, expires_minutes=token_expire_minutes)
-    return AuthResponse(user=_to_user_dto(user), token=token, token_expires_in_minutes=token_expire_minutes)
+    return AuthResponse(user=_to_user_dto(user, db), token=token, token_expires_in_minutes=token_expire_minutes)
 
 
 def get_current_user(
@@ -146,8 +155,8 @@ def get_current_user(
 
 
 @router.get("/me", response_model=UserDTO)
-def me(current_user: User = Depends(get_current_user)):
-    return _to_user_dto(current_user)
+def me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _to_user_dto(current_user, db)
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)
