@@ -1,5 +1,5 @@
 <template>
-  <view class="screen plan-page" :style="{ paddingTop: pageTop + 'px' }">
+  <view :class="['screen plan-page', themeStore.themeClass]" :style="{ paddingTop: pageTop + 'px' }">
     <view class="top-bar">
       <button class="icon-button" aria-label="返回" @tap="goBack">‹</button>
     </view>
@@ -137,10 +137,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useTripStore } from '@/stores/tripStore'
+import { useThemeStore } from '@/stores/themeStore'
 import { addDays, calculateDays, formatDate, todayText } from '@/utils/format'
 import { parseTravelIntent } from '@/utils/travelIntent'
 
 const tripStore = useTripStore()
+const themeStore = useThemeStore()
 const today = todayText()
 const pageTop = ref(78)
 const departureCity = ref('')
@@ -198,6 +200,7 @@ onMounted(() => {
 
 onShow(() => {
   tripStore.restoreLocal()
+  themeStore.restore()
 })
 
 const handleStartDateChange = (event: any) => {

@@ -1,5 +1,5 @@
 <template>
-  <view class="screen auth-page">
+  <view :class="['screen auth-page', themeStore.themeClass]">
     <view class="auth-head">
       <text class="page-title">{{ mode === 'login' ? '欢迎回来' : '创建账号' }}</text>
       <text class="page-subtitle">同步行程、保存草稿，也方便在多端继续查看旅行方案。</text>
@@ -26,7 +26,7 @@
         </view>
       </view>
 
-      <button class="primary-button" :disabled="authStore.isLoading" @tap="submit">
+      <button class="primary-button auth-submit" :disabled="authStore.isLoading" @tap="submit">
         {{ authStore.isLoading ? '处理中...' : mode === 'login' ? '登录' : '注册并登录' }}
       </button>
 
@@ -40,8 +40,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useAuthStore } from '@/stores/authStore'
+import { useThemeStore } from '@/stores/themeStore'
 
 const authStore = useAuthStore()
+const themeStore = useThemeStore()
 const mode = ref<'login' | 'register'>('login')
 const name = ref('')
 const email = ref('')
@@ -110,7 +112,7 @@ const submit = async () => {
 
 .mode-switch button.active {
   color: var(--text-strong);
-  background: #ffffff;
+  background: var(--surface);
   box-shadow: var(--shadow-soft);
 }
 
@@ -119,11 +121,24 @@ const submit = async () => {
   gap: 24rpx;
 }
 
+.auth-submit {
+  color: #1d4ed8;
+  border: 1rpx solid #bfdbfe;
+  background: #dbeafe;
+  box-shadow: 0 10rpx 22rpx rgba(37, 99, 235, 0.12);
+}
+
+.auth-submit[disabled] {
+  color: #7aa7e8;
+  background: #e8f1ff;
+  box-shadow: none;
+}
+
 .auth-note {
   padding: 18rpx 20rpx;
   border-radius: 16rpx;
   color: var(--text-muted);
-  background: #f6f7f9;
+  background: var(--surface-soft);
   font-size: 23rpx;
   line-height: 1.5;
 }

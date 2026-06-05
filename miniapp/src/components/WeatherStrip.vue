@@ -45,9 +45,8 @@ const weatherIcon = (condition: string) => {
 .weather-strip__inner {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  border: 1rpx solid var(--line);
-  border-radius: 16rpx;
-  background: #ffffff;
+  gap: 10rpx;
+  background: transparent;
 }
 
 .weather-card {
@@ -56,11 +55,13 @@ const weatherIcon = (condition: string) => {
   min-width: 0;
   min-height: 132rpx;
   padding: 18rpx 6rpx 16rpx;
+  border-radius: 16rpx;
+  background: var(--surface-soft);
   text-align: center;
 }
 
 .weather-card + .weather-card {
-  border-left: 1rpx solid var(--line);
+  border-left: 0;
 }
 
 .weather-card__date,

@@ -1,5 +1,5 @@
 <template>
-  <view class="screen profile-page">
+  <view :class="['screen profile-page', themeStore.themeClass]">
     <view class="profile-card panel">
       <view class="profile-card__top">
         <view class="avatar">{{ initials }}</view>
@@ -38,22 +38,50 @@
         <text>创建新规划</text>
         <text>›</text>
       </button>
-      <button class="menu__item" @tap="showHint">
+      <button class="menu__item" @tap="toggleSettings">
         <text>个性化设置</text>
         <text>›</text>
       </button>
+    </view>
+
+    <view v-if="settingsOpen" class="appearance-panel panel">
+      <view class="appearance-panel__head">
+        <text class="appearance-panel__title">外观</text>
+        <text class="appearance-panel__desc">选择小程序显示主题</text>
+      </view>
+      <view class="theme-options">
+        <button
+          class="theme-option"
+          :class="{ active: themeStore.theme === 'light' }"
+          @tap="themeStore.setTheme('light')"
+        >
+          <text>浅色主题</text>
+          <text>明亮背景</text>
+        </button>
+        <button
+          class="theme-option"
+          :class="{ active: themeStore.theme === 'dark' }"
+          @tap="themeStore.setTheme('dark')"
+        >
+          <text>深色主题</text>
+          <text>低亮度背景</text>
+        </button>
+      </view>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useAuthStore } from '@/stores/authStore'
 import { useTripStore } from '@/stores/tripStore'
+import { useThemeStore } from '@/stores/themeStore'
 
 const authStore = useAuthStore()
 const tripStore = useTripStore()
+const themeStore = useThemeStore()
+const settingsOpen = ref(false)
 
 const initials = computed(() => {
   const name = authStore.userName || '旅行者'
@@ -70,6 +98,7 @@ const visitedCities = computed(() => new Set(tripStore.tripHistory.map((trip) =>
 onShow(() => {
   authStore.restore()
   tripStore.loadHistory()
+  themeStore.restore()
 })
 
 const goAuth = () => {
@@ -84,8 +113,8 @@ const goPlan = () => {
   uni.switchTab({ url: '/pages/plan/index' })
 }
 
-const showHint = () => {
-  uni.showToast({ title: '更多偏好设置即将上线', icon: 'none' })
+const toggleSettings = () => {
+  settingsOpen.value = !settingsOpen.value
 }
 
 const logout = () => {
@@ -218,5 +247,70 @@ const logout = () => {
 
 .menu__item:last-child {
   border-bottom: 0;
+}
+
+.appearance-panel {
+  display: grid;
+  gap: 22rpx;
+  padding: 26rpx;
+}
+
+.appearance-panel__title,
+.appearance-panel__desc {
+  display: block;
+}
+
+.appearance-panel__title {
+  color: var(--text-strong);
+  font-size: 30rpx;
+  font-weight: 900;
+}
+
+.appearance-panel__desc {
+  margin-top: 8rpx;
+  color: var(--text-muted);
+  font-size: 23rpx;
+}
+
+.theme-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16rpx;
+}
+
+.theme-option {
+  display: grid;
+  gap: 8rpx;
+  min-height: 116rpx;
+  padding: 20rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 18rpx;
+  color: var(--text-main);
+  background: var(--surface-soft);
+  text-align: left;
+}
+
+.theme-option text:first-child {
+  color: var(--text-strong);
+  font-size: 26rpx;
+  font-weight: 850;
+}
+
+.theme-option text:last-child {
+  color: var(--text-muted);
+  font-size: 22rpx;
+}
+
+.theme-option.active {
+  border-color: #93c5fd;
+  background: #dbeafe;
+}
+
+.theme-option.active text:first-child {
+  color: #1d4ed8;
+}
+
+.theme-option.active text:last-child {
+  color: #2563eb;
 }
 </style>

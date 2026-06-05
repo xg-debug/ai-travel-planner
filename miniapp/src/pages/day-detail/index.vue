@@ -1,5 +1,5 @@
 <template>
-  <view v-if="day" class="screen day-detail">
+  <view v-if="day" :class="['screen day-detail', themeStore.themeClass]">
     <view class="day-head panel">
       <view>
         <text class="day-head__label">{{ trip?.destination }}</text>
@@ -47,7 +47,7 @@
     </SectionPanel>
   </view>
 
-  <view v-else class="screen">
+  <view v-else :class="['screen', themeStore.themeClass]">
     <EmptyState
       title="没有找到当天行程"
       description="返回行程详情，重新选择某一天查看。"
@@ -63,10 +63,12 @@ import { onLoad, onShow } from '@dcloudio/uni-app'
 import SectionPanel from '@/components/SectionPanel.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { useTripStore } from '@/stores/tripStore'
+import { useThemeStore } from '@/stores/themeStore'
 import { activityTypeLabel, formatDate, formatMoney } from '@/utils/format'
 import type { Activity } from '@/types/trip'
 
 const tripStore = useTripStore()
+const themeStore = useThemeStore()
 const dayIndex = ref(0)
 const trip = computed(() => tripStore.currentTrip)
 const day = computed(() => trip.value?.days[dayIndex.value])
@@ -78,6 +80,7 @@ onLoad((query) => {
 
 onShow(() => {
   tripStore.restoreLocal()
+  themeStore.restore()
 })
 
 const openPlace = (activityIndex: number) => {

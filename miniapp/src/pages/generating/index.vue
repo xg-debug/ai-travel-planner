@@ -1,5 +1,5 @@
 <template>
-  <view class="screen generating-page">
+  <view :class="['screen generating-page', themeStore.themeClass]">
     <view class="summary-card">
       <view class="summary-card__content">
         <view class="summary-card__top">
@@ -57,8 +57,10 @@ import { computed } from 'vue'
 import { onLoad, onUnload } from '@dcloudio/uni-app'
 import { storeToRefs } from 'pinia'
 import { useTripStore } from '@/stores/tripStore'
+import { useThemeStore } from '@/stores/themeStore'
 
 const tripStore = useTripStore()
+const themeStore = useThemeStore()
 const { draft } = storeToRefs(tripStore)
 const activeText = computed(() => tripStore.activeStepLabel)
 const activeStepNumber = computed(() => Math.min(tripStore.activeStepIndex + 1, tripStore.steps.length))
@@ -70,6 +72,7 @@ const progressPercent = computed(() => {
 })
 
 onLoad(() => {
+  themeStore.restore()
   tripStore.restoreLocal()
   startGenerate()
 })

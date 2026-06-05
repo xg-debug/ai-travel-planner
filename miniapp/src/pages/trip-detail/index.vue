@@ -1,9 +1,14 @@
 <template>
-  <view v-if="trip" class="screen trip-detail">
+  <view v-if="trip" :class="['screen trip-detail', themeStore.themeClass]">
     <view class="hero">
       <view class="hero__copy">
         <text class="hero__title">{{ trip.destination }} {{ dayCount }}日游</text>
-        <text class="hero__subtitle">{{ heroSubtitle }}</text>
+        <view class="hero__tags">
+          <view v-for="tag in heroInterestTags" :key="tag.id" class="hero__tag">
+            <text class="hero__tag-icon">{{ tag.icon }}</text>
+            <text class="hero__tag-label">{{ tag.label }}</text>
+          </view>
+        </view>
       </view>
       <view class="hero__scene">
         <view class="hero__sun" />
@@ -124,7 +129,7 @@
     </SectionPanel>
   </view>
 
-  <view v-else class="screen">
+  <view v-else :class="['screen', themeStore.themeClass]">
     <EmptyState
       title="还没有行程"
       description="先生成一份旅行计划，就能在这里查看每日安排、预算和天气。"
@@ -146,11 +151,13 @@ import TripDayCard from '@/components/TripDayCard.vue'
 import RouteMapPreview from '@/components/RouteMapPreview.vue'
 import RecommendationRail from '@/components/RecommendationRail.vue'
 import { useTripStore } from '@/stores/tripStore'
+import { useThemeStore } from '@/stores/themeStore'
 import { calculateDays, formatMoney } from '@/utils/format'
 import { dayRouteStops, tripAttractions, tripFood, tripHotels, tripMapActivities } from '@/utils/tripDisplay'
 import type { Activity, IntercityTransportLeg, POI } from '@/types/trip'
 
 const tripStore = useTripStore()
+const themeStore = useThemeStore()
 const { currentTrip: trip } = storeToRefs(tripStore)
 
 const activityCount = computed(() =>
@@ -172,9 +179,32 @@ const intercityLegs = computed<IntercityTransportLeg[]>(() => {
   return [transport?.outbound, transport?.inbound].filter(Boolean) as IntercityTransportLeg[]
 })
 const attractionCount = computed(() => Math.max(attractionItems.value.length, activityCount.value))
-const heroSubtitle = computed(() => {
-  const tags = trip.value?.interests?.filter(Boolean).slice(0, 3)
-  return tags?.length ? tags.join(' · ') : '历史文化 · 在地美食 · 轻松动线'
+const interestTagOptions = [
+  { id: 'classic', icon: '📍', label: '经典必玩' },
+  { id: 'food', icon: '🍽️', label: '吃吃喝喝' },
+  { id: 'local', icon: '🕵️', label: '小众探索' },
+  { id: 'photo', icon: '📸', label: '拍照出片' },
+  { id: 'shopping', icon: '🛍️', label: '逛街购物' },
+  { id: 'citywalk', icon: '🚶', label: '城市漫步' },
+  { id: 'nature', icon: '🏞️', label: '自然风光' },
+  { id: 'art', icon: '🎨', label: '文艺展览' },
+  { id: 'history', icon: '🏛️', label: '历史古建' }
+]
+const fallbackInterestTags = [
+  { id: 'history', icon: '🏛️', label: '历史古建' },
+  { id: 'food', icon: '🍽️', label: '吃吃喝喝' },
+  { id: 'local', icon: '🕵️', label: '小众探索' }
+]
+const heroInterestTags = computed(() => {
+  const tags = (trip.value?.interests || [])
+    .map((id) => interestTagOptions.find((item) => item.id === id) || {
+      id,
+      icon: '✨',
+      label: String(id || '').trim()
+    })
+    .filter((item) => item.label)
+    .slice(0, 3)
+  return tags.length ? tags : fallbackInterestTags
 })
 const distanceText = computed(() => `${estimateDistanceKm(routeActivities.value).toFixed(1)}km`)
 const perPersonBudget = computed(() => {
@@ -205,6 +235,7 @@ const transportCostPerPerson = (leg: IntercityTransportLeg) =>
 
 onShow(() => {
   tripStore.restoreLocal()
+  themeStore.restore()
 })
 
 const openDay = (index: number) => {
@@ -292,8 +323,7 @@ const distanceBetween = (a: { lat: number; lng: number }, b: { lat: number; lng:
   padding: 28rpx 4rpx 8rpx;
 }
 
-.hero__title,
-.hero__subtitle {
+.hero__title {
   display: block;
 }
 
@@ -304,15 +334,43 @@ const distanceBetween = (a: { lat: number; lng: number }, b: { lat: number; lng:
   line-height: 1.15;
 }
 
-.hero__subtitle {
-  display: inline-block;
+.hero__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
   margin-top: 14rpx;
-  padding: 8rpx 16rpx;
+}
+
+.hero__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
+  max-width: 210rpx;
+  min-height: 46rpx;
+  box-sizing: border-box;
+  padding: 0 14rpx;
   border: 1rpx solid var(--line);
-  border-radius: 14rpx;
+  border-radius: 999rpx;
   color: var(--text-main);
-  background: #ffffff;
-  font-size: 25rpx;
+  background: var(--surface);
+  box-shadow: 0 4rpx 12rpx rgba(17, 24, 39, 0.04);
+}
+
+.hero__tag-icon {
+  flex: 0 0 auto;
+  font-size: 20rpx;
+  line-height: 1;
+}
+
+.hero__tag-label {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hero__scene {

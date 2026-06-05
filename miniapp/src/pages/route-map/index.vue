@@ -1,5 +1,5 @@
 <template>
-  <view v-if="trip" class="route-map-page">
+  <view v-if="trip" :class="['route-map-page', themeStore.themeClass]">
     <map
       v-if="hasMapData"
       class="route-map"
@@ -62,7 +62,7 @@
     </view>
   </view>
 
-  <view v-else class="route-map-page route-map-page--empty">
+  <view v-else :class="['route-map-page route-map-page--empty', themeStore.themeClass]">
     <view class="map-empty">
       <text>暂无可展示的行程，请先生成旅行计划。</text>
     </view>
@@ -73,6 +73,7 @@
 import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useTripStore } from '@/stores/tripStore'
+import { useThemeStore } from '@/stores/themeStore'
 import { tripApi } from '@/services/tripApi'
 import { dayRouteStops } from '@/utils/tripDisplay'
 
@@ -104,12 +105,14 @@ type MapRoutePlan = {
 const routeColors = ['#32B7D9', '#21BFA4', '#FF6A7A', '#F59E0B', '#8B5CF6', '#0F172A']
 
 const tripStore = useTripStore()
+const themeStore = useThemeStore()
 const selectedDay = ref(-1)
 const selectedPointKey = ref('')
 const routePlans = ref<Record<number, MapRoutePlan>>({})
 const trip = computed(() => tripStore.currentTrip)
 
 onShow(() => {
+  themeStore.restore()
   tripStore.restoreLocal()
   selectedDay.value = -1
   selectedPointKey.value = ''

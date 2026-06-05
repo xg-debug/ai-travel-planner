@@ -22,6 +22,43 @@
   --shadow-lift: 0 14rpx 34rpx rgba(17, 24, 39, 0.08);
 }
 
+.theme-light {
+  --app-bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-soft: #f0f3f6;
+  --text-strong: #111827;
+  --text-main: #344054;
+  --text-muted: #7a8494;
+  --line: #e2e8f0;
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --sky: #edf4ff;
+  --shadow-soft: 0 8rpx 22rpx rgba(17, 24, 39, 0.05);
+  --shadow-lift: 0 14rpx 34rpx rgba(17, 24, 39, 0.08);
+}
+
+.theme-dark {
+  --app-bg: #0f172a;
+  --surface: #111827;
+  --surface-soft: #1e293b;
+  --text-strong: #f8fafc;
+  --text-main: #cbd5e1;
+  --text-muted: #94a3b8;
+  --line: #334155;
+  --primary: #93c5fd;
+  --primary-dark: #60a5fa;
+  --teal: #7dd3fc;
+  --amber: #fbbf24;
+  --coral: #fb7185;
+  --violet: #a78bfa;
+  --mint: #123431;
+  --sky: #172554;
+  --sun: #3b2f12;
+  --danger: #f87171;
+  --shadow-soft: 0 8rpx 22rpx rgba(0, 0, 0, 0.18);
+  --shadow-lift: 0 14rpx 34rpx rgba(0, 0, 0, 0.24);
+}
+
 .screen {
   min-height: 100vh;
   box-sizing: border-box;
@@ -29,6 +66,73 @@
   overflow-x: hidden;
   padding: 28rpx 24rpx 48rpx;
   background: var(--app-bg);
+}
+
+.theme-dark .text-field,
+.theme-dark .textarea-field,
+.theme-dark .chip {
+  background: #111827;
+}
+
+.theme-dark .secondary-button {
+  color: var(--text-strong);
+  background: #1e293b;
+}
+
+.theme-dark .fixed-action {
+  background: rgba(15, 23, 42, 0.96);
+}
+
+.theme-dark .panel,
+.theme-dark .destination-card,
+.theme-dark .date-card,
+.theme-dark .time-card,
+.theme-dark .preference-card,
+.theme-dark .summary-item,
+.theme-dark .transport-leg,
+.theme-dark .transport-total,
+.theme-dark .activity__content,
+.theme-dark .transport-option,
+.theme-dark .budget-item,
+.theme-dark .weather-card,
+.theme-dark .recommendation-card,
+.theme-dark .day-card,
+.theme-dark .trip-card,
+.theme-dark .empty-card,
+.theme-dark .steps-card,
+.theme-dark .step,
+.theme-dark .place-card,
+.theme-dark .metric,
+.theme-dark .featured-trip__metrics {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.theme-dark .mode-switch,
+.theme-dark .auth-note,
+.theme-dark .stats__item,
+.theme-dark .route-map__canvas,
+.theme-dark .route-map__timeline,
+.theme-dark .transport-option--best,
+.theme-dark .theme-option,
+.theme-dark .stepper__button {
+  background: var(--surface-soft);
+}
+
+.theme-dark .chip.active {
+  border-color: #93c5fd;
+  color: #0f172a;
+  background: #bfdbfe;
+}
+
+.theme-dark .theme-option.active {
+  border-color: #93c5fd;
+  background: #1e3a8a;
+}
+
+.theme-dark .theme-option.active text:first-child,
+.theme-dark .theme-option.active text:last-child {
+  color: #dbeafe;
 }
 
 .screen-with-action {

@@ -1,5 +1,5 @@
 <template>
-  <view class="screen trips-page">
+  <view :class="['screen trips-page', themeStore.themeClass]">
     <view class="top-bar">
       <view class="top-bar__title">
         <text class="page-heading">我的行程</text>
@@ -92,16 +92,19 @@ import { computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useAuthStore } from '@/stores/authStore'
 import { useTripStore } from '@/stores/tripStore'
+import { useThemeStore } from '@/stores/themeStore'
 import { formatDateRange, formatMoney } from '@/utils/format'
 
 const authStore = useAuthStore()
 const tripStore = useTripStore()
+const themeStore = useThemeStore()
 
 const latestTrip = computed(() => tripStore.tripHistory[0] || null)
 
 onShow(() => {
   authStore.restore()
   tripStore.loadHistory()
+  themeStore.restore()
 })
 
 const monthOf = (value?: string) => {

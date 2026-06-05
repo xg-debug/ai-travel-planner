@@ -1,5 +1,5 @@
 <template>
-  <view v-if="activity" class="screen place-detail">
+  <view v-if="activity" :class="['screen place-detail', themeStore.themeClass]">
     <view class="place-card panel">
       <text class="place-card__type">{{ isTransportActivity ? '交通' : activityTypeLabel(activity.type) }}</text>
       <text class="place-card__title">{{ isTransportActivity ? activity.title : activity.location || activity.title }}</text>
@@ -63,7 +63,7 @@
     </button>
   </view>
 
-  <view v-else class="screen">
+  <view v-else :class="['screen', themeStore.themeClass]">
     <EmptyState title="没有找到地点" description="返回当天行程后重新打开地点详情。" action-text="返回" @action="back" />
   </view>
 </template>
@@ -74,10 +74,12 @@ import { onLoad, onShow } from '@dcloudio/uni-app'
 import SectionPanel from '@/components/SectionPanel.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { useTripStore } from '@/stores/tripStore'
+import { useThemeStore } from '@/stores/themeStore'
 import { activityTypeLabel, formatMoney } from '@/utils/format'
 import type { TransportOption } from '@/types/trip'
 
 const tripStore = useTripStore()
+const themeStore = useThemeStore()
 const dayIndex = ref(0)
 const activityIndex = ref(0)
 const activity = computed(() => tripStore.currentTrip?.days[dayIndex.value]?.activities[activityIndex.value])
@@ -112,6 +114,7 @@ onLoad((query) => {
 
 onShow(() => {
   tripStore.restoreLocal()
+  themeStore.restore()
 })
 
 const openLocation = () => {

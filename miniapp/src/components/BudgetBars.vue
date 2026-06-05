@@ -54,14 +54,15 @@ const iconKey = (name: string) => {
 .budget-summary {
   display: grid;
   overflow: hidden;
-  border: 1rpx solid var(--line);
+  gap: 18rpx;
   border-radius: 16rpx;
-  background: #ffffff;
+  background: transparent;
 }
 
 .budget-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10rpx;
 }
 
 .budget-item {
@@ -73,11 +74,13 @@ const iconKey = (name: string) => {
   min-width: 0;
   min-height: 118rpx;
   padding: 16rpx 4rpx;
+  border-radius: 16rpx;
+  background: var(--surface-soft);
   text-align: center;
 }
 
 .budget-item + .budget-item {
-  border-left: 1rpx solid var(--line);
+  border-left: 0;
 }
 
 .budget-item__icon {
@@ -126,7 +129,7 @@ const iconKey = (name: string) => {
   align-items: baseline;
   justify-content: flex-end;
   gap: 14rpx;
-  padding: 0 22rpx 18rpx;
+  padding: 0 4rpx;
 }
 
 .budget-total text:first-child {
@@ -142,6 +145,7 @@ const iconKey = (name: string) => {
 
 .budget-tip {
   padding: 14rpx 22rpx;
+  border-radius: 14rpx;
   color: #0fa29a;
   background: #edf9f8;
   font-size: 22rpx;
