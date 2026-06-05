@@ -28,8 +28,8 @@
             <text class="activity__location">{{ activity.location }}</text>
             <text class="activity__desc">{{ activity.description }}</text>
             <view class="activity__tags">
-              <text>{{ activityTypeLabel(activity.type) }}</text>
-              <text>{{ activity.duration }} 分钟</text>
+              <text>{{ activityTagLabel(activity) }}</text>
+              <text>{{ activityDurationTag(activity) }}</text>
               <text v-if="activity.ticketLabel">{{ activity.ticketLabel }}</text>
             </view>
           </view>
@@ -64,6 +64,7 @@ import SectionPanel from '@/components/SectionPanel.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { useTripStore } from '@/stores/tripStore'
 import { activityTypeLabel, formatDate, formatMoney } from '@/utils/format'
+import type { Activity } from '@/types/trip'
 
 const tripStore = useTripStore()
 const dayIndex = ref(0)
@@ -86,6 +87,12 @@ const openPlace = (activityIndex: number) => {
 const formatHotelPrice = (value: number | string) => {
   return typeof value === 'number' ? `${formatMoney(value)}/晚` : value
 }
+
+const activityTagLabel = (activity: Activity) =>
+  activity.isIntercityTransport ? '#交通' : activityTypeLabel(activity.type)
+
+const activityDurationTag = (activity: Activity) =>
+  activity.isIntercityTransport ? `#${activity.duration}分钟` : `${activity.duration} 分钟`
 
 const back = () => {
   uni.navigateBack()

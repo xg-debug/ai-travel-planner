@@ -32,6 +32,38 @@
           </div>
         </div>
 
+        <div v-if="intercityTransport" class="mb-8 rounded-xl border border-blue-100 bg-white p-5 shadow-sm">
+          <div class="mb-4 flex items-center justify-between gap-4">
+            <div>
+              <h2 class="text-lg font-bold text-slate-900">往返交通</h2>
+              <p class="mt-1 text-sm text-slate-500">{{ trip.departureCity || intercityTransport.departureCity }} → {{ trip.destination }}</p>
+            </div>
+            <div class="text-right">
+              <div class="text-xs text-slate-500">交通合计</div>
+              <div class="text-xl font-bold text-teal-600">{{ formatTransportMoney(intercityTransport.totalCost, intercityTransport.costPending) }}</div>
+            </div>
+          </div>
+          <div class="grid gap-3 md:grid-cols-2">
+            <div
+              v-for="leg in intercityLegs"
+              :key="leg.direction"
+              class="rounded-xl border border-slate-100 bg-slate-50 p-4"
+            >
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-xs font-semibold text-blue-600">{{ transportDirectionLabel(leg.direction) }}</div>
+                  <div class="mt-1 font-bold text-slate-900">{{ leg.from }} → {{ leg.to }}</div>
+                </div>
+                <span class="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm">{{ leg.mode }}</span>
+              </div>
+              <div class="mt-3 grid grid-cols-2 gap-3 text-sm text-slate-600">
+                <div>时间：{{ transportTimeText(leg) }}</div>
+                <div>单人：{{ formatTransportMoney(leg.costPerPerson, leg.costPending) }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="mb-8 grid gap-6 lg:grid-cols-3">
           <div class="rounded-xl border border-gray-100 bg-white p-6 shadow-sm lg:col-span-2">
             <h2 class="mb-3 text-lg font-bold text-gray-900">行程概览</h2>
@@ -375,7 +407,7 @@ import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
 import TravelNav from '@/components/TravelNav.vue'
 import AuthModal from '@/components/AuthModal.vue'
-import type { Activity } from '@/types/trip'
+import type { Activity, IntercityTransportLeg } from '@/types/trip'
 
 // ===== 基础定义 =====
 const route = useRoute()
@@ -384,6 +416,11 @@ const tripStore = useTripStore()
 
 // 获取 Store 中的数据
 const trip = computed(() => tripStore.currentTrip)
+const intercityTransport = computed(() => trip.value?.intercityTransport)
+const intercityLegs = computed<IntercityTransportLeg[]>(() => {
+  const transport = intercityTransport.value
+  return [transport?.outbound, transport?.inbound].filter(Boolean) as IntercityTransportLeg[]
+})
 const weatherCityLabel = computed(() => trip.value?.weather?.[0]?.city || trip.value?.destination || '当前目的地')
 const routeDaySummaries = computed(() =>
   (trip.value?.days || []).map((day: any, index: number) => {
@@ -417,6 +454,15 @@ const openAuth = (mode: 'login' | 'register') => {
   authMode.value = mode
   showAuthModal.value = true
 }
+
+const formatCurrency = (value: number | string | undefined) => `¥${Math.round(Number(value || 0)).toLocaleString()}`
+const formatTransportMoney = (value: number | string | undefined, pending?: boolean) =>
+  pending ? '待估算' : formatCurrency(value)
+const transportDirectionLabel = (direction: string) => direction === 'inbound' ? '返程' : '去程'
+const transportTimeText = (leg: IntercityTransportLeg) =>
+  leg.departureDatetime && leg.arrivalDatetime
+    ? `${leg.departureDatetime} → ${leg.arrivalDatetime}`
+    : (leg.durationText || `${leg.durationMinutes} 分钟`)
 
 // ===== 行程与活动逻辑 =====
 const activeDayIndex = ref(0)

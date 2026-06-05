@@ -135,14 +135,26 @@ class ScoringService:
     def _budget_score(self, item: Dict[str, Any], context: Dict[str, Any], kind: str) -> float:
         price = _safe_float(item.get("price"), 0.0)
         budget_level = str(context.get("budget") or "中等")
+        target_total = _safe_float(context.get("budget_amount"), 0.0)
+        travelers = max(int(context.get("travelers") or 1), 1)
+        days = max(int(context.get("days") or 1), 1)
+        target_per_person_day = target_total / travelers / days if target_total > 0 else 0
         if price <= 0:
             return 82.0
         if kind == "hotel":
+            if target_per_person_day >= 900:
+                return 92.0 if price >= 500 else 68.0
+            if target_per_person_day >= 550:
+                return 92.0 if 250 <= price <= 900 else 70.0
             if budget_level == "经济":
                 return 90.0 if price <= 350 else 55.0
             if budget_level == "豪华":
                 return 88.0 if price >= 500 else 72.0
             return 90.0 if price <= 800 else 65.0
+        if kind == "food" and target_per_person_day >= 900:
+            return 90.0 if 100 <= price <= 500 else 72.0
+        if kind == "food" and target_per_person_day >= 550:
+            return 90.0 if 60 <= price <= 300 else 74.0
         if budget_level == "经济":
             return 90.0 if price <= 80 else 60.0
         if budget_level == "豪华":

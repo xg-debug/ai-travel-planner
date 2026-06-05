@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 from app.agents.workers.task_execution_agent import BaseTaskExecutionAgent
 from app.orchestration.task_models import build_task_result
 from app.orchestration.task_router import complete_task, get_ready_task_for_step
+from app.services.intercity_transport_service import plan_intercity_transport
 from app.tools.amap_tools import calculate_route_tool
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ class TransportExecutionAgent(BaseTaskExecutionAgent):
             try:
                 route = calculate_route_tool(pair["origin_coord"], pair["destination_coord"], next_context.get("mode", "driving"))
             except Exception as exc:
-                logger.warning("transport route failed: %s", exc)
+                logger.debug("transport route skipped: %s", exc)
                 failed_legs = list(next_context.get("failed_legs", []))
                 failed_legs.append(
                     {
@@ -148,6 +149,18 @@ class TransportExecutionAgent(BaseTaskExecutionAgent):
     def finalize(self, state: Dict[str, Any], task: Dict[str, Any], context: Dict[str, Any], trace: List[Dict[str, Any]]) -> Dict[str, Any]:
         legs = list(context.get("built_legs", []))
         failed_legs = list(context.get("failed_legs", []))
+        intercity_transport = plan_intercity_transport(
+            state.get("departure_city"),
+            state.get("city"),
+            int(state.get("travelers") or 1),
+            start_date=state.get("start_date"),
+            outbound_departure_datetime=state.get("outbound_departure_datetime"),
+            return_arrival_datetime=state.get("return_arrival_datetime"),
+            days=int(state.get("days") or 1),
+            budget_amount=state.get("budget_amount") or 0,
+            budget_level=state.get("budget"),
+            preferences=state.get("preferences") or [],
+        )
         transport_plan = {
             "mode": context.get("mode", "driving"),
             "legs": legs,
@@ -155,9 +168,11 @@ class TransportExecutionAgent(BaseTaskExecutionAgent):
             "total_duration_minutes": int(context.get("total_duration", 0) or 0) // 60 if context.get("total_duration") else 0,
             "total_distance_km": round(int(context.get("total_distance", 0) or 0) / 1000, 1) if context.get("total_distance") else 0,
             "summary": context.get("summary") or ("优先围绕同一区域串联景点、餐饮与酒店，减少来回折返。" if legs else "缺少足够坐标信息，无法生成详细动线。"),
+            "intercity_transport": intercity_transport,
         }
         return {
             "transport_plan": transport_plan,
+            "intercity_transport": intercity_transport,
             "task_result": build_task_result(
                 output={"plan": transport_plan},
                 metrics={
@@ -165,6 +180,7 @@ class TransportExecutionAgent(BaseTaskExecutionAgent):
                     "failed_legs": len(failed_legs),
                     "distance_km": transport_plan["total_distance_km"],
                     "duration_minutes": transport_plan["total_duration_minutes"],
+                    "intercity_transport_cost": intercity_transport.get("total_cost", 0) if intercity_transport else 0,
                 },
                 trace=trace,
                 summary=transport_plan["summary"],
@@ -182,5 +198,6 @@ def transport_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     task_result = execution_result["task_result"]
     return {
         "transport_plan": transport_plan,
+        "intercity_transport": execution_result.get("intercity_transport", {}),
         **complete_task(state, "transport_agent", task_result),
     }

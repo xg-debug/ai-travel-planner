@@ -74,6 +74,7 @@ import { computed, ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useTripStore } from '@/stores/tripStore'
 import { tripApi } from '@/services/tripApi'
+import { dayRouteStops } from '@/utils/tripDisplay'
 
 type RoutePoint = {
   key: string
@@ -91,12 +92,13 @@ type RouteSegment = {
   points: RoutePoint[]
 }
 
-type TencentRoutePlan = {
+type MapRoutePlan = {
   dayIndex: number
   distance: number
   duration: number
   polyline: Array<{ latitude: number; longitude: number }>
   legs?: Array<Record<string, unknown>>
+  provider?: string
 }
 
 const routeColors = ['#32B7D9', '#21BFA4', '#FF6A7A', '#F59E0B', '#8B5CF6', '#0F172A']
@@ -104,19 +106,19 @@ const routeColors = ['#32B7D9', '#21BFA4', '#FF6A7A', '#F59E0B', '#8B5CF6', '#0F
 const tripStore = useTripStore()
 const selectedDay = ref(-1)
 const selectedPointKey = ref('')
-const routePlans = ref<Record<number, TencentRoutePlan>>({})
+const routePlans = ref<Record<number, MapRoutePlan>>({})
 const trip = computed(() => tripStore.currentTrip)
 
 onShow(() => {
   tripStore.restoreLocal()
   selectedDay.value = -1
   selectedPointKey.value = ''
-  loadTencentRoutes()
+  loadMapRoutes()
 })
 
 const daySegments = computed<RouteSegment[]>(() => (trip.value?.days || []).map((day, dayIndex) => ({
   dayIndex,
-  points: day.activities
+  points: dayRouteStops(day)
     .map((activity, index) => {
       if (!activity.coordinates) return null
       return {
@@ -303,7 +305,7 @@ const showPoiTip = () => {
   uni.showToast({ title: '地点操作即将开放', icon: 'none' })
 }
 
-const loadTencentRoutes = async () => {
+const loadMapRoutes = async () => {
   const segments = daySegments.value.map((segment) => ({
     dayIndex: segment.dayIndex,
     points: segment.points.map((point) => ({
@@ -316,14 +318,14 @@ const loadTencentRoutes = async () => {
   if (!segments.length) return
 
   try {
-    const response = await tripApi.planTencentRoutes({ mode: 'driving', segments })
-    const nextPlans: Record<number, TencentRoutePlan> = {}
-    ;(response?.segments || []).forEach((segment: TencentRoutePlan) => {
+    const response = await tripApi.planMapRoutes({ mode: 'driving', segments })
+    const nextPlans: Record<number, MapRoutePlan> = {}
+    ;(response?.segments || []).forEach((segment: MapRoutePlan) => {
       nextPlans[segment.dayIndex] = segment
     })
     routePlans.value = nextPlans
   } catch (error) {
-    console.warn('Tencent route planning failed, fallback to point polyline:', error)
+    console.warn('Map route planning failed, fallback to point polyline:', error)
     routePlans.value = {}
   }
 }

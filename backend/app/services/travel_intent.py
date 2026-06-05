@@ -2,170 +2,72 @@ import re
 from typing import Dict
 
 
-CITY_DESTINATIONS = sorted(
-    {
-        "北京",
-        "上海",
-        "广州",
-        "深圳",
-        "杭州",
-        "南京",
-        "苏州",
-        "成都",
-        "重庆",
-        "武汉",
-        "西安",
-        "长沙",
-        "青岛",
-        "厦门",
-        "福州",
-        "泉州",
-        "宁波",
-        "温州",
-        "无锡",
-        "常州",
-        "扬州",
-        "南通",
-        "天津",
-        "大连",
-        "沈阳",
-        "哈尔滨",
-        "长春",
-        "济南",
-        "烟台",
-        "威海",
-        "郑州",
-        "洛阳",
-        "开封",
-        "太原",
-        "石家庄",
-        "合肥",
-        "南昌",
-        "昆明",
-        "大理",
-        "丽江",
-        "西双版纳",
-        "贵阳",
-        "遵义",
-        "南宁",
-        "桂林",
-        "北海",
-        "海口",
-        "三亚",
-        "拉萨",
-        "林芝",
-        "西宁",
-        "兰州",
-        "敦煌",
-        "银川",
-        "呼和浩特",
-        "乌鲁木齐",
-        "喀什",
-        "香港",
-        "澳门",
-        "台北",
-        "高雄",
-        "垦丁",
-        "舟山",
-        "黄山",
-        "婺源",
-        "张家界",
-        "凤凰",
-        "恩施",
-        "宜昌",
-        "九江",
-        "景德镇",
-        "秦皇岛",
-        "承德",
-        "阿勒泰",
-        "伊犁",
-        "吐鲁番",
-        "呼伦贝尔",
-        "漠河",
-        "延吉",
-        "长白山",
-    },
-    key=len,
-    reverse=True,
-)
-
-REGION_DESTINATIONS = sorted(
-    {
-        "广东",
-        "浙江",
-        "江苏",
-        "四川",
-        "云南",
-        "贵州",
-        "广西",
-        "海南",
-        "福建",
-        "山东",
-        "河南",
-        "河北",
-        "湖北",
-        "湖南",
-        "江西",
-        "安徽",
-        "陕西",
-        "山西",
-        "甘肃",
-        "青海",
-        "宁夏",
-        "新疆",
-        "西藏",
-        "内蒙古",
-        "东北",
-        "华东",
-        "川西",
-    },
-    key=len,
-    reverse=True,
-)
-
-GENERIC_DESTINATIONS = {
+GENERIC_DESTINATION_TERMS = {
+    "周边",
+    "附近",
+    "城市",
+    "景点",
+    "路线",
+    "旅游",
+    "旅行",
+    "游玩",
+    "目的地",
     "海边",
     "沙滩",
     "草原",
     "雪山",
     "古镇",
-    "山里",
+    "山区",
     "海岛",
     "温泉",
-    "景点",
-    "城市",
-    "周边",
 }
+
+INTENT_WORDS = "我|想|要|准备|计划|打算|去|到|玩|游|逛|看|吃|住|出发|返回|返程|预算|人均|天|日"
 
 
 def _normalize_input(value: str) -> str:
-    return re.sub(r"\s+", "", str(value or "")).strip().rstrip("!?！？。；;")
+    return re.sub(r"\s+", "", str(value or "")).strip().rstrip("!?！？。；;,，、")
 
 
 def _strip_administrative_suffix(value: str) -> str:
-    return re.sub(r"(特别行政区|自治区|自治州|地区|市|省|县|区)$", "", value)
+    text = str(value or "").strip()
+    while True:
+        next_text = re.sub(r"(特别行政区|自治区|自治州|地区|城市|市|省|县|区)$", "", text)
+        if next_text == text:
+            return text
+        text = next_text
 
 
-def _find_known_destination(text: str) -> str:
-    for item in CITY_DESTINATIONS:
-        if item in text:
-            return item
-    for item in REGION_DESTINATIONS:
-        if item in text:
-            return item
-    return ""
+def _clean_destination_candidate(value: str) -> str:
+    text = _strip_administrative_suffix(_normalize_input(value))
+    text = re.sub(r"^(?:想去|想要去|计划去|准备去|打算去|前往|目的地是|目的地为|目的地|去|到)", "", text)
+    text = re.sub(r"(?:旅游|旅行|游玩|自由行|攻略|路线|行程|[0-9一二三四五六七八九十两]+日游)$", "", text)
+    return _strip_administrative_suffix(text)
+
+
+def _is_valid_destination(value: str) -> bool:
+    text = _clean_destination_candidate(value)
+    return bool(text and len(text) >= 2 and text not in GENERIC_DESTINATION_TERMS)
+
+
+def _looks_like_plain_destination(value: str) -> bool:
+    cleaned = _normalize_input(value)
+    if not re.fullmatch(r"[\u4e00-\u9fa5A-Za-z·路]{2,24}", cleaned):
+        return False
+    return not re.search(INTENT_WORDS, cleaned)
 
 
 def _extract_destination_by_pattern(text: str) -> str:
     patterns = (
-        r"(?:想去|要去|准备去|计划去|打算去|一个人去|和.+?去|去|到|前往)([\u4e00-\u9fa5]{2,12}?)(?:旅游|旅行|游玩|玩|逛|看|吃|住|，|,|。|\.|、|和|并|$)",
-        r"([\u4e00-\u9fa5]{2,12}?)(?:旅游|旅行|[0-9一二三四五六七八九十]+日游)",
+        r"(?:从|自)[\u4e00-\u9fa5A-Za-z·路]{2,24}(?:出发|启程|动身)(?:到|去|前往)([\u4e00-\u9fa5A-Za-z·路]{2,24})",
+        r"(?:目的地(?:是|为)?|想去|想要去|计划去|准备去|打算去|前往|去|到)([\u4e00-\u9fa5A-Za-z·路]{2,24})",
+        r"([\u4e00-\u9fa5A-Za-z·路]{2,24})(?:[0-9一二三四五六七八九十两]+日游|旅游|旅行|游玩|自由行|攻略)",
     )
     for pattern in patterns:
-        matched = re.search(pattern, text)
-        destination = _strip_administrative_suffix(matched.group(1) if matched else "")
-        if destination and destination not in GENERIC_DESTINATIONS:
-            return destination
+        for matched in re.finditer(pattern, text):
+            destination = _clean_destination_candidate(matched.group(1))
+            if _is_valid_destination(destination):
+                return destination
     return ""
 
 
@@ -175,12 +77,10 @@ def parse_travel_intent(value: str) -> Dict[str, str]:
         return {"destination": "", "additional_requirements": ""}
 
     exact_destination = _strip_administrative_suffix(cleaned)
-    if re.fullmatch(r"[\u4e00-\u9fa5A-Za-z·]{2,20}", cleaned) and not re.search(
-        r"[我想要准备计划打算去到玩游逛看吃住，,、]", cleaned
-    ):
+    if _looks_like_plain_destination(cleaned):
         return {"destination": exact_destination, "additional_requirements": ""}
 
-    destination = _find_known_destination(cleaned) or _extract_destination_by_pattern(cleaned)
+    destination = _extract_destination_by_pattern(cleaned)
     return {
         "destination": destination,
         "additional_requirements": cleaned if destination and destination != cleaned else "",
@@ -190,13 +90,20 @@ def parse_travel_intent(value: str) -> Dict[str, str]:
 def normalize_trip_city_and_query(city: str, query: str) -> Dict[str, str]:
     raw_city = str(city or "").strip()
     raw_query = str(query or "").strip()
-    parsed = parse_travel_intent(f"{raw_city}，{raw_query}")
     city_only = parse_travel_intent(raw_city)
-    normalized_city = parsed["destination"] or city_only["destination"]
-    normalized_query = raw_query
+    normalized_city = city_only["destination"]
 
-    if parsed["additional_requirements"] and raw_city and raw_city not in raw_query:
-        normalized_query = "，".join([item for item in (raw_query, raw_city) if item])
+    if not normalized_city and raw_city and _looks_like_plain_destination(raw_city):
+        normalized_city = _strip_administrative_suffix(_normalize_input(raw_city))
+
+    if not normalized_city:
+        normalized_city = parse_travel_intent(raw_query)["destination"]
+
+    normalized_query = raw_query
+    if normalized_city and normalized_query and normalized_city not in normalized_query:
+        normalized_query = "，".join([normalized_query, normalized_city])
+    elif normalized_city and not normalized_query:
+        normalized_query = normalized_city
 
     return {
         "city": normalized_city,

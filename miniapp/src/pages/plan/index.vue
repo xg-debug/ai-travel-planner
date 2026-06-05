@@ -5,6 +5,22 @@
     </view>
 
     <section class="section-block section-block--hero">
+      <text class="section-title">从哪里出发？</text>
+      <view class="destination-card">
+        <view class="destination-input-row">
+          <text class="spark-icon">出</text>
+          <input
+            v-model="departureCity"
+            class="destination-input"
+            placeholder="输入出发城市，如上海"
+            placeholder-class="destination-placeholder"
+            confirm-type="next"
+          />
+        </view>
+      </view>
+    </section>
+
+    <section class="section-block section-block--hero">
       <text class="section-title">你想去哪里？</text>
       <view class="destination-card">
         <view class="destination-input-row">
@@ -32,6 +48,12 @@
             </view>
           </view>
         </picker>
+        <picker mode="time" :value="departureTime" @change="handleDepartureTimeChange">
+          <view class="time-cell">
+            <text class="time-cell__label">出发</text>
+            <text class="time-cell__value">{{ departureTime }}</text>
+          </view>
+        </picker>
         <view class="date-divider" />
         <picker mode="date" :value="endDate" :start="startDate" @change="handleEndDateChange">
           <view class="date-cell date-cell--end">
@@ -39,7 +61,13 @@
               <text class="date-cell__label">结束日期</text>
               <text class="date-cell__value">{{ endDateLabel }}</text>
             </view>
-            <text class="chevron">›</text>
+           
+          </view>
+        </picker>
+        <picker mode="time" :value="returnArrivalTime" @change="handleReturnArrivalTimeChange">
+          <view class="time-cell">
+            <text class="time-cell__label">返达</text>
+            <text class="time-cell__value">{{ returnArrivalTime }}</text>
           </view>
         </picker>
       </view>
@@ -115,9 +143,12 @@ import { parseTravelIntent } from '@/utils/travelIntent'
 const tripStore = useTripStore()
 const today = todayText()
 const pageTop = ref(78)
+const departureCity = ref('')
 const destination = ref('')
 const startDate = ref(today)
 const endDate = ref(addDays(today, 2))
+const departureTime = ref('08:00')
+const returnArrivalTime = ref('20:00')
 const travelers = ref(2)
 const budgetPerPerson = ref(3500)
 const interests = ref<string[]>(['classic', 'food', 'history'])
@@ -138,7 +169,21 @@ const days = computed(() => calculateDays(startDate.value, endDate.value))
 const startDateLabel = computed(() => formatDate(startDate.value))
 const endDateLabel = computed(() => formatDate(endDate.value))
 const totalBudget = computed(() => Math.max(0, Number(budgetPerPerson.value || 0)) * travelers.value)
-const canSubmit = computed(() => Boolean(destination.value.trim() && startDate.value && totalBudget.value > 0))
+const toDateTimeValue = (dateValue: string, timeValue: string) => new Date(`${dateValue}T${timeValue}:00`).getTime()
+const hasValidTimeRange = computed(() => {
+  const startAt = toDateTimeValue(startDate.value, departureTime.value)
+  const endAt = toDateTimeValue(endDate.value, returnArrivalTime.value)
+  return Number.isFinite(startAt) && Number.isFinite(endAt) && endAt > startAt
+})
+const canSubmit = computed(() => Boolean(
+  departureCity.value.trim()
+  && destination.value.trim()
+  && startDate.value
+  && departureTime.value
+  && returnArrivalTime.value
+  && hasValidTimeRange.value
+  && totalBudget.value > 0
+))
 
 onMounted(() => {
   const menu = (uni as any).getMenuButtonBoundingClientRect?.()
@@ -172,6 +217,14 @@ const handleEndDateChange = (event: any) => {
   endDate.value = nextEnd
 }
 
+const handleDepartureTimeChange = (event: any) => {
+  departureTime.value = event.detail.value
+}
+
+const handleReturnArrivalTimeChange = (event: any) => {
+  returnArrivalTime.value = event.detail.value
+}
+
 const toggleInterest = (id: string) => {
   interests.value = interests.value.includes(id)
     ? interests.value.filter((item) => item !== id)
@@ -180,7 +233,7 @@ const toggleInterest = (id: string) => {
 
 const submit = () => {
   if (!canSubmit.value) {
-    uni.showToast({ title: '请填写目的地和预算', icon: 'none' })
+    uni.showToast({ title: '请填写出发城市、目的地和预算', icon: 'none' })
     return
   }
   const intent = parseTravelIntent(destination.value)
@@ -192,10 +245,17 @@ const submit = () => {
     uni.showToast({ title: '当前仅支持 1-7 天游', icon: 'none' })
     return
   }
+  if (!hasValidTimeRange.value) {
+    uni.showToast({ title: '返程到达时间必须晚于出发时间', icon: 'none' })
+    return
+  }
   tripStore.setDraft({
+    departureCity: departureCity.value.trim(),
     destination: intent.destination,
     startDate: startDate.value,
     endDate: endDate.value,
+    departureTime: departureTime.value,
+    returnArrivalTime: returnArrivalTime.value,
     days: days.value,
     travelers: travelers.value,
     interests: interests.value,
@@ -323,13 +383,18 @@ const goBack = () => {
 
 .date-range-card {
   display: grid;
-  grid-template-columns: 1fr 1rpx 1fr;
+  grid-template-columns: minmax(0, 1fr) auto 1rpx minmax(0, 1fr) auto;
   align-items: center;
+  column-gap: 14rpx;
   box-sizing: border-box;
   min-height: 124rpx;
-  padding: 0 30rpx;
+  padding: 0 24rpx;
   border-radius: 999rpx;
   background: #ffffff;
+}
+
+.date-range-card picker {
+  min-width: 0;
 }
 
 .date-cell {
@@ -341,7 +406,7 @@ const goBack = () => {
 
 .date-cell--end {
   justify-content: space-between;
-  padding-left: 26rpx;
+  padding-left: 18rpx;
 }
 
 .date-icon {
@@ -375,6 +440,27 @@ const goBack = () => {
   width: 1rpx;
   height: 56rpx;
   background: #ededf0;
+}
+
+.time-cell {
+  display: grid;
+  justify-items: end;
+  gap: 8rpx;
+  min-width: 76rpx;
+}
+
+.time-cell__label {
+  color: #b7c0cc;
+  font-size: 22rpx;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.time-cell__value {
+  color: #050505;
+  font-size: 28rpx;
+  font-weight: 950;
+  line-height: 1;
 }
 
 .chevron {

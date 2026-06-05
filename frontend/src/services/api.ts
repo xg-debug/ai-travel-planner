@@ -115,9 +115,11 @@ export interface ForgotPasswordResponse {
 export interface PlanTripRequest {
   query: string
   city: string
+  departure_city?: string
   days: number
   preferences?: string[]
   budget?: string
+  budget_amount?: number
   travelers?: number
   start_date?: string
 }

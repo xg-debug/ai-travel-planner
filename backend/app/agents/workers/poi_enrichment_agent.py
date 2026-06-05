@@ -10,6 +10,7 @@ from app.agents.shared import (
     select_state_candidate_for_activity,
 )
 from app.agents.workers.task_execution_agent import BaseTaskExecutionAgent
+from app.core.config import settings
 from app.orchestration.task_models import build_task_result
 from app.orchestration.task_router import complete_task, get_ready_task_for_step
 from app.tools.amap_tools import search_pois_tool
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class PoiExecutionAgent(BaseTaskExecutionAgent):
     name = "poi_agent"
-    max_steps = 18
+    max_steps = settings.MAX_TRIP_DAYS * settings.MAX_ACTIVITIES_PER_DAY * 4 + 4
 
     def build_initial_context(self, state: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
         plan = state.get("plan", []) or []

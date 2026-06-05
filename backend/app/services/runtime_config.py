@@ -65,15 +65,32 @@ def is_present_secret(value: str | None) -> bool:
     text = (value or "").strip()
     if not text:
         return False
+    lowered = text.lower()
     placeholders = (
         "your_openai_api_key_here",
+        "your_openai_key",
         "your_anthropic_api_key_here",
+        "your_anthropic_key",
         "your_google_api_key_here",
+        "your_google_key",
         "your_deepseek_api_key_here",
+        "your_deepseek_key",
         "your_amap_api_key_here",
+        "your_amap_key",
         "your_tencent_map_api_key_here",
+        "your_tencent_map_key",
     )
-    return text not in placeholders and "test-key" not in text
+    placeholder_markers = (
+        "your_",
+        "replace_with_",
+        "test_",
+        "test-key",
+        "demo_",
+        "example_",
+        "placeholder",
+        "changeme",
+    )
+    return lowered not in placeholders and not any(marker in lowered for marker in placeholder_markers)
 
 
 def get_setting_value(db: Session, key: str, default: str | None = None) -> str | None:

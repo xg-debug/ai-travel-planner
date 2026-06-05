@@ -38,7 +38,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Activity, TripDay } from '@/types/trip'
-import { routeActivities } from '@/utils/tripDisplay'
+import { dayRouteStops } from '@/utils/tripDisplay'
 
 const props = defineProps<{
   activities?: Activity[]
@@ -65,7 +65,7 @@ const displayGroups = computed(() => {
       dayNumber: index + 1,
       color: colors[index % colors.length],
       shape: index,
-      activities: routeActivities(day).slice(0, 4)
+      activities: dayRouteStops(day).slice(0, 4)
     })).filter((group) => group.activities.length)
   }
   return [{

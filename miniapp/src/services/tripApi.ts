@@ -6,6 +6,28 @@ export interface ForgotPasswordResponse {
   reset_token?: string | null
 }
 
+type PlanJobStatus = 'running' | 'completed' | 'failed'
+
+interface PlanJobStartResponse {
+  job_id: string
+  status: PlanJobStatus
+}
+
+export interface PlanJobResponse {
+  job_id: string
+  status: PlanJobStatus
+  step?: string
+  message?: string
+  progress?: number
+  updated_at?: number
+  result?: TripResponse | null
+  error?: string
+}
+
+const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
+const PLAN_JOB_MAX_WAIT_MS = 30 * 60 * 1000
+const PLAN_JOB_POLL_INTERVAL_MS = 2500
+
 export const tripApi = {
   register(email: string, password: string, name?: string, rememberMe = true) {
     return request<AuthResponse>({
@@ -48,8 +70,53 @@ export const tripApi = {
       url: '/trip/plan',
       method: 'POST',
       data: payload,
-      timeout: 180000
+      timeout: 300000
     })
+  },
+
+  startPlanTripJob(payload: PlanTripRequest) {
+    return request<PlanJobStartResponse>({
+      url: '/trip/plan/jobs',
+      method: 'POST',
+      data: payload,
+      timeout: 30000
+    })
+  },
+
+  getPlanTripJob(jobId: string) {
+    return request<PlanJobResponse>({
+      url: `/trip/plan/jobs/${jobId}`,
+      timeout: 30000
+    })
+  },
+
+  async planTripWithPolling(payload: PlanTripRequest, onProgress?: (job: PlanJobResponse) => void) {
+    const started = await this.startPlanTripJob(payload)
+    if (!started.job_id) throw new Error('规划任务启动失败，请稍后重试')
+
+    const deadline = Date.now() + PLAN_JOB_MAX_WAIT_MS
+    let pollingFailures = 0
+    while (Date.now() < deadline) {
+      await wait(PLAN_JOB_POLL_INTERVAL_MS)
+      let job: PlanJobResponse
+      try {
+        job = await this.getPlanTripJob(started.job_id)
+        pollingFailures = 0
+      } catch (error) {
+        pollingFailures += 1
+        if (pollingFailures >= 5) throw error
+        continue
+      }
+      onProgress?.(job)
+      if (job.status === 'completed') {
+        if (!job.result) throw new Error('规划任务已完成，但未返回行程结果')
+        return job.result
+      }
+      if (job.status === 'failed') {
+        throw new Error(job.error || '行程规划失败，请稍后重试')
+      }
+    }
+    throw new Error('规划任务等待超时，请稍后在行程页查看或重新生成')
   },
 
   listTripPlans() {
@@ -90,12 +157,16 @@ export const tripApi = {
     })
   },
 
-  planTencentRoutes(payload: any) {
+  planMapRoutes(payload: any) {
     return request<any>({
-      url: '/trip/route/tencent',
+      url: '/trip/route/map',
       method: 'POST',
       data: payload,
       timeout: 60000
     })
+  },
+
+  planTencentRoutes(payload: any) {
+    return this.planMapRoutes(payload)
   }
 }

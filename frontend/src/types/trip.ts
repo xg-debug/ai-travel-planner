@@ -1,4 +1,5 @@
 export interface TripRequest {
+  departureCity: string
   destination: string
   startDate: string
   endDate: string
@@ -12,6 +13,39 @@ export interface TripRequest {
     food?: 'local' | 'international' | 'mixed'
     transportation?: 'public' | 'private' | 'mixed'
   }
+}
+
+export interface IntercityTransportLeg {
+  direction: 'outbound' | 'inbound' | string
+  from: string
+  to: string
+  mode: string
+  departureDatetime?: string
+  arrivalDatetime?: string
+  durationMinutes: number
+  durationText: string
+  distanceKm: number
+  costPerPerson: number
+  totalCost: number
+  currency: string
+  estimated?: boolean
+  costPending?: boolean
+  source?: string
+  note?: string
+}
+
+export interface IntercityTransportPlan {
+  departureCity: string
+  destination: string
+  currency: string
+  estimated?: boolean
+  costPending?: boolean
+  distanceKm?: number
+  totalCost: number
+  costPerPerson: number
+  outbound?: IntercityTransportLeg
+  inbound?: IntercityTransportLeg
+  summary?: string
 }
 
 export interface Activity {
@@ -102,6 +136,7 @@ export interface BudgetBreakdown {
 
 export interface Trip {
   id: string
+  departureCity?: string
   destination: string
   startDate: string
   endDate: string
@@ -112,6 +147,7 @@ export interface Trip {
   recommendations: POI[]
   hotels?: POI[]
   budget: BudgetBreakdown
+  intercityTransport?: IntercityTransportPlan
   plan?: string
   createdAt: string
   updatedAt: string
@@ -190,4 +226,5 @@ export interface TripResponse {
     activity_adjustment: number
     tips: string[]
   }
+  intercity_transport?: Record<string, any>
 }

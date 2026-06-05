@@ -65,8 +65,9 @@ export function request<T>(options: RequestOptions): Promise<T> {
         }
         reject(new Error(parseApiError(res.data, res.statusCode)))
       },
-      fail: () => {
-        reject(new Error('网络连接异常，请检查网络后重试'))
+      fail: (err) => {
+        const detail = String((err as any)?.errMsg || '').trim()
+        reject(new Error(detail ? `网络连接异常：${detail}` : '网络连接异常，请检查网络后重试'))
       }
     })
   })

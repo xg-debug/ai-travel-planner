@@ -13,6 +13,24 @@ from app.core.database import Base, engine
 import app.models  # noqa: F401
 from app.core.config import settings
 
+
+def _build_log_handlers():
+    handlers = [logging.StreamHandler()]
+    if settings.LOG_FILE:
+        log_dir = os.path.dirname(settings.LOG_FILE)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        handlers.append(logging.FileHandler(settings.LOG_FILE, encoding="utf-8"))
+    return handlers
+
+
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    handlers=_build_log_handlers(),
+    force=True,
+)
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI(

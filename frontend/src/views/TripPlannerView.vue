@@ -86,8 +86,28 @@
             <!-- 表单内容 -->
             <div class="p-8">
               <div class="space-y-8">
-                <!-- 第一行：目的地和日期 -->
-                <div class="grid md:grid-cols-3 gap-6">
+                <!-- 第一行：出发地、目的地和日期 -->
+                <div class="grid md:grid-cols-4 gap-6">
+                  <!-- 出发城市 -->
+                  <div class="space-y-3">
+                    <label class="block text-sm font-medium text-gray-700">
+                      <span class="text-red-500">*</span> 出发城市
+                    </label>
+                    <div class="relative">
+                      <div class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7" />
+                        </svg>
+                      </div>
+                      <input
+                        v-model="departureCity"
+                        type="text"
+                        placeholder="例如：上海、广州..."
+                        class="w-full pl-10 pr-4 py-3 bg-white border border-gray-300 rounded-lg text-gray-900 placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all duration-300"
+                      />
+                    </div>
+                  </div>
+
                   <!-- 目的地 -->
                   <div class="space-y-3">
                     <label class="block text-sm font-medium text-gray-700">
@@ -391,6 +411,7 @@ const tripStore = useTripStore()
 const authStore = useAuthStore()
 
 const destination = ref('')
+const departureCity = ref('')
 const startDate = ref('')
 const endDate = ref('')
 const travelers = ref(2)
@@ -416,8 +437,9 @@ const availableInterests = [
 ]
 
 const canGenerate = computed(() => {
-  return destination.value.trim() !== '' && 
-         startDate.value !== '' && 
+  return departureCity.value.trim() !== '' &&
+         destination.value.trim() !== '' &&
+         startDate.value !== '' &&
          endDate.value !== ''
 })
 
@@ -476,6 +498,7 @@ const generateTrip = async () => {
       : interests.value
 
     const tripRequest: TripRequest = {
+      departureCity: departureCity.value.trim(),
       destination: destination.value,
       startDate: startDate.value,
       endDate: endDate.value,
@@ -516,6 +539,7 @@ const showValidationError = () => {
   const errors: string[] = []
   
   if (!destination.value.trim()) errors.push('• 目的地')
+  if (!departureCity.value.trim()) errors.push('• 出发城市')
   if (!startDate.value) errors.push('• 开始日期')
   if (!endDate.value) errors.push('• 结束日期')
   

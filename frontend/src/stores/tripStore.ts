@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { tripApi } from '@/services/api'
-import type { Trip, TripRequest, TripDay, Activity, WeatherForecast, POI, BudgetCategory, TripResponse, HotelRecommendation } from '@/types/trip'
+import type { Trip, TripRequest, TripDay, Activity, WeatherForecast, POI, BudgetCategory, TripResponse, HotelRecommendation, IntercityTransportLeg, IntercityTransportPlan } from '@/types/trip'
 import { useAuthStore } from '@/stores/authStore'
 
 type StreamStepStatus = 'pending' | 'active' | 'done' | 'error'
@@ -20,7 +20,7 @@ const buildInitialStreamSteps = (): StreamStep[] => [
   { key: 'attraction_agent', label: '搜索景点', status: 'pending' },
   { key: 'food_agent', label: '搜索餐饮', status: 'pending' },
   { key: 'hotel_agent', label: '推荐酒店', status: 'pending' },
-  { key: 'transport_agent', label: '评估动线', status: 'pending' },
+  { key: 'transport_agent', label: '评估往返交通', status: 'pending' },
   { key: 'synthesizer_agent', label: '生成行程', status: 'pending' },
   { key: 'poi_agent', label: '补全景点', status: 'pending' },
   { key: 'reviewer_agent', label: '审查行程', status: 'pending' },
@@ -63,9 +63,11 @@ export const useTripStore = defineStore('trip', () => {
       const apiRequest = {
         query: `${tripRequest.destination} ${tripRequest.days}日游`,
         city: tripRequest.destination,
+        departure_city: tripRequest.departureCity,
         days: tripRequest.days,
         preferences: tripRequest.interests,
         budget: mapBudgetLevel(tripRequest.budget, tripRequest.days, tripRequest.travelers),
+        budget_amount: tripRequest.budget,
         travelers: tripRequest.travelers,
         start_date: tripRequest.startDate
       }
@@ -105,6 +107,7 @@ export const useTripStore = defineStore('trip', () => {
       // 将API响应转换为前端Trip格式
       const trip: Trip = {
         id: `trip_${Date.now()}`,
+        departureCity: tripRequest.departureCity,
         destination: tripRequest.destination,
         startDate: tripRequest.startDate,
         endDate: calculateEndDate(tripRequest.startDate, tripRequest.days),
@@ -115,6 +118,7 @@ export const useTripStore = defineStore('trip', () => {
           currency: response.estimated_budget?.currency || 'CNY',
           categories: convertBudgetBreakdown(response.estimated_budget?.breakdown)
         },
+        intercityTransport: convertIntercityTransport(response.intercity_transport),
         days: parsedDays,
         weather,
         hotels: convertHotels(response.hotels),
@@ -267,6 +271,49 @@ export const useTripStore = defineStore('trip', () => {
       { name: '门票', amount: tickets, planned: tickets },
       { name: '购物', amount: shopping, planned: shopping }
     ]
+  }
+
+  const convertIntercityTransport = (source: any): IntercityTransportPlan | undefined => {
+    if (!source || typeof source !== 'object') return undefined
+    const outbound = convertIntercityLeg(source.outbound)
+    const inbound = convertIntercityLeg(source.inbound)
+    const totalCost = Number(source.total_cost ?? source.totalCost ?? 0) || 0
+    if (!outbound && !inbound && !totalCost) return undefined
+    return {
+      departureCity: String(source.departure_city ?? source.departureCity ?? ''),
+      destination: String(source.destination ?? ''),
+      currency: String(source.currency || 'CNY'),
+      estimated: Boolean(source.estimated),
+      costPending: Boolean(source.cost_pending ?? source.costPending),
+      distanceKm: Number(source.distance_km ?? source.distanceKm) || undefined,
+      totalCost,
+      costPerPerson: Number(source.cost_per_person ?? source.costPerPerson ?? 0) || 0,
+      outbound,
+      inbound,
+      summary: source.summary || ''
+    }
+  }
+
+  const convertIntercityLeg = (source: any): IntercityTransportLeg | undefined => {
+    if (!source || typeof source !== 'object') return undefined
+    return {
+      direction: String(source.direction || ''),
+      from: String(source.from || ''),
+      to: String(source.to || ''),
+      mode: String(source.mode || ''),
+      departureDatetime: String(source.departure_datetime ?? source.departureDatetime ?? ''),
+      arrivalDatetime: String(source.arrival_datetime ?? source.arrivalDatetime ?? ''),
+      durationMinutes: Number(source.duration_minutes ?? source.durationMinutes ?? 0) || 0,
+      durationText: String(source.duration_text ?? source.durationText ?? ''),
+      distanceKm: Number(source.distance_km ?? source.distanceKm ?? 0) || 0,
+      costPerPerson: Number(source.cost_per_person ?? source.costPerPerson ?? 0) || 0,
+      totalCost: Number(source.total_cost ?? source.totalCost ?? 0) || 0,
+      currency: String(source.currency || 'CNY'),
+      estimated: Boolean(source.estimated),
+      costPending: Boolean(source.cost_pending ?? source.costPending),
+      source: String(source.source || ''),
+      note: source.note || ''
+    }
   }
 
   const normalizeStepKey = (step?: string): StreamStepKey | null => {

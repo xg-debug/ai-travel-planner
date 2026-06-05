@@ -48,7 +48,9 @@ class BudgetService:
         self, 
         itinerary: List[Dict[str, Any]], 
         travelers: int = 1,
-        budget_level: str = "中等"
+        budget_level: str = "中等",
+        target_total: Optional[float] = None,
+        intercity_transport: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         估算旅行预算
@@ -68,6 +70,7 @@ class BudgetService:
         base_budget = self.budget_levels.get(budget_level, self.budget_levels["中等"])
         breakdown = self._calculate_breakdown_from_itinerary(itinerary, travelers, base_budget)
         daily_budgets = self._calculate_daily_budgets(itinerary, travelers, base_budget)
+        self._merge_intercity_transport_cost(breakdown, daily_budgets, intercity_transport)
         total = sum(int(value) for value in breakdown.values())
         activity_adjustment = self._calculate_activity_adjustment(itinerary)
         
@@ -77,6 +80,7 @@ class BudgetService:
             "per_day": int(total / days) if days > 0 else int(total),
             "breakdown": breakdown,
             "daily_budgets": daily_budgets,
+            "intercity_transport": intercity_transport or {},
             "currency": "CNY",
             "budget_level": budget_level,
             "travelers": travelers,
@@ -84,9 +88,88 @@ class BudgetService:
             "activity_adjustment": round(activity_adjustment, 2),
             "tips": self._get_budget_tips(budget_level, itinerary)
         }
+        if target_total:
+            budget_report = self._align_to_target_budget(budget_report, float(target_total), travelers, days)
         
         logger.info(f"Budget estimated: {budget_report['total']} CNY")
         return budget_report
+
+    def _align_to_target_budget(
+        self,
+        budget_report: Dict[str, Any],
+        target_total: float,
+        travelers: int,
+        days: int,
+    ) -> Dict[str, Any]:
+        requested_total = int(target_total)
+        if requested_total <= 0:
+            return budget_report
+
+        current_total = int(budget_report.get("total") or 0)
+        target_min_total = int(requested_total * 0.85)
+        budget_report["requested_total"] = requested_total
+        budget_report["target_min_total"] = target_min_total
+        budget_report["is_over_budget"] = current_total > requested_total
+        budget_report["was_under_budget"] = current_total < target_min_total
+
+        if current_total <= 0 or current_total >= target_min_total or current_total > requested_total:
+            return budget_report
+
+        gap = target_min_total - current_total
+        breakdown = dict(budget_report.get("breakdown") or {})
+        weights = {
+            "accommodation": 0.35,
+            "food": 0.25,
+            "tickets": 0.20,
+            "transportation": 0.10,
+            "shopping": 0.10,
+        }
+        self._distribute_gap(breakdown, gap, weights)
+
+        daily_budgets = list(budget_report.get("daily_budgets") or [])
+        if daily_budgets:
+            daily_gap = gap
+            for index, daily in enumerate(daily_budgets):
+                remaining_days = len(daily_budgets) - index
+                addition = int(round(daily_gap / max(remaining_days, 1)))
+                daily_gap -= addition
+                categories = dict(daily.get("categories") or {})
+                self._distribute_gap(categories, addition, weights)
+                daily["categories"] = categories
+                daily["total"] = int(sum(int(value) for value in categories.values()))
+                daily["risk"] = "target_aligned"
+
+        adjusted_total = min(requested_total, int(sum(int(value) for value in breakdown.values())))
+        budget_report["total"] = adjusted_total
+        budget_report["per_person"] = int(adjusted_total / travelers) if travelers > 0 else adjusted_total
+        budget_report["per_day"] = int(adjusted_total / days) if days > 0 else adjusted_total
+        budget_report["breakdown"] = {key: int(value) for key, value in breakdown.items()}
+        budget_report["daily_budgets"] = daily_budgets
+        budget_report["is_over_budget"] = adjusted_total > requested_total
+        budget_report["is_under_budget"] = adjusted_total < target_min_total
+        budget_report["budget_alignment"] = {
+            "status": "target_aligned",
+            "original_total": current_total,
+            "requested_total": requested_total,
+            "target_min_total": target_min_total,
+            "added_planning_reserve": adjusted_total - current_total,
+        }
+        tips = list(budget_report.get("tips") or [])
+        tips.append("已按用户预算预留住宿、餐饮和体验升级空间，避免行程明显低于预算档位")
+        budget_report["tips"] = tips
+        return budget_report
+
+    def _distribute_gap(self, categories: Dict[str, Any], gap: int, weights: Dict[str, float]) -> None:
+        if gap <= 0:
+            return
+        remaining = int(gap)
+        keys = list(weights.keys())
+        for key in keys[:-1]:
+            addition = int(round(gap * weights[key]))
+            categories[key] = int(categories.get(key) or 0) + addition
+            remaining -= addition
+        last_key = keys[-1]
+        categories[last_key] = int(categories.get(last_key) or 0) + max(0, remaining)
 
     def _safe_number(self, value: Any) -> float:
         try:
@@ -138,6 +221,8 @@ class BudgetService:
             breakdown["accommodation"] += hotel_price if hotel_price > 0 else float(base_budget["accommodation"]) * travelers
 
             for activity in day.get("activities", []) or []:
+                if activity.get("is_intercity_transport"):
+                    continue
                 explicit_cost = self._safe_number(activity.get("cost_estimate") or activity.get("cost"))
                 ticket_price = self._safe_number(activity.get("ticket_price") or activity.get("ticketPrice"))
                 category = self._get_activity_category(activity)
@@ -181,6 +266,8 @@ class BudgetService:
             categories["accommodation"] = hotel_price if hotel_price > 0 else float(base_budget["accommodation"]) * travelers
 
             for activity in day.get("activities", []) or []:
+                if activity.get("is_intercity_transport"):
+                    continue
                 explicit_cost = self._safe_number(activity.get("cost_estimate") or activity.get("cost"))
                 ticket_price = self._safe_number(activity.get("ticket_price") or activity.get("ticketPrice"))
                 category = self._get_activity_category(activity)
@@ -213,6 +300,39 @@ class BudgetService:
                 }
             )
         return daily
+
+    def _merge_intercity_transport_cost(
+        self,
+        breakdown: Dict[str, int | float],
+        daily_budgets: List[Dict[str, Any]],
+        intercity_transport: Optional[Dict[str, Any]],
+    ) -> None:
+        if not intercity_transport:
+            return
+
+        outbound = intercity_transport.get("outbound") or {}
+        inbound = intercity_transport.get("inbound") or {}
+        outbound_cost = int(self._safe_number(outbound.get("total_cost")))
+        inbound_cost = int(self._safe_number(inbound.get("total_cost")))
+        total_cost = int(self._safe_number(intercity_transport.get("total_cost"))) or outbound_cost + inbound_cost
+        if total_cost <= 0:
+            return
+
+        breakdown["transportation"] = int(breakdown.get("transportation") or 0) + total_cost
+        if not daily_budgets:
+            return
+
+        if outbound_cost > 0:
+            self._add_daily_transport_cost(daily_budgets[0], outbound_cost, "intercity_outbound")
+        if inbound_cost > 0:
+            self._add_daily_transport_cost(daily_budgets[-1], inbound_cost, "intercity_inbound")
+
+    def _add_daily_transport_cost(self, daily_budget: Dict[str, Any], cost: int, risk: str) -> None:
+        categories = dict(daily_budget.get("categories") or {})
+        categories["transportation"] = int(categories.get("transportation") or 0) + cost
+        daily_budget["categories"] = categories
+        daily_budget["total"] = int(sum(int(value) for value in categories.values()))
+        daily_budget["risk"] = risk if daily_budget.get("risk") == "normal" else daily_budget.get("risk", risk)
     
     def _calculate_activity_adjustment(self, itinerary: List[Dict[str, Any]]) -> float:
         """根据活动类型计算预算调整系数"""
@@ -372,9 +492,11 @@ budget_service = BudgetService()
 def estimate_budget(
     itinerary: List[Dict[str, Any]], 
     travelers: int = 1,
-    budget_level: str = "中等"
+    budget_level: str = "中等",
+    target_total: Optional[float] = None,
+    intercity_transport: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    return budget_service.estimate_budget(itinerary, travelers, budget_level)
+    return budget_service.estimate_budget(itinerary, travelers, budget_level, target_total, intercity_transport)
 
 def optimize_budget(
     budget: Dict[str, Any], 

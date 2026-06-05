@@ -1,7 +1,10 @@
 export interface TripRequest {
+  departureCity: string
   destination: string
   startDate: string
   endDate: string
+  departureTime?: string
+  returnArrivalTime?: string
   days: number
   travelers: number
   interests: string[]
@@ -13,6 +16,24 @@ export interface TripRequest {
     transportation?: 'public' | 'private' | 'mixed'
   }
   additionalRequirements?: string
+}
+
+export interface TransportOption {
+  mode: string
+  fromTerminal: string
+  toTerminal: string
+  departureDatetime?: string
+  arrivalDatetime?: string
+  durationMinutes: number
+  durationText?: string
+  costPerPerson: number
+  totalCost: number
+  currency?: string
+  estimated?: boolean
+  costPending?: boolean
+  source?: string
+  reason?: string
+  recommended?: boolean
 }
 
 export interface Activity {
@@ -35,6 +56,18 @@ export interface Activity {
     lat: number
     lng: number
   }
+  isIntercityTransport?: boolean
+  intercityDirection?: string
+  transportation?: string
+  fromTerminal?: string
+  toTerminal?: string
+  departureDatetime?: string
+  arrivalDatetime?: string
+  costPerPerson?: number
+  totalCost?: number
+  bestTransportOption?: TransportOption
+  transportOptions?: TransportOption[]
+  transportAlternatives?: TransportOption[]
 }
 
 export interface HotelRecommendation {
@@ -43,6 +76,48 @@ export interface HotelRecommendation {
   priceEstimate?: number | string
   reason?: string
   rating?: number
+  coordinates?: {
+    lat: number
+    lng: number
+  }
+}
+
+export interface IntercityTransportLeg {
+  direction: 'outbound' | 'inbound' | string
+  from: string
+  to: string
+  mode: string
+  fromTerminal?: string
+  toTerminal?: string
+  departureDatetime?: string
+  arrivalDatetime?: string
+  durationMinutes: number
+  durationText: string
+  distanceKm: number
+  costPerPerson: number
+  totalCost: number
+  currency: string
+  estimated?: boolean
+  costPending?: boolean
+  source?: string
+  note?: string
+  bestOption?: TransportOption
+  alternatives?: TransportOption[]
+  options?: TransportOption[]
+}
+
+export interface IntercityTransportPlan {
+  departureCity: string
+  destination: string
+  currency: string
+  estimated?: boolean
+  costPending?: boolean
+  distanceKm?: number
+  totalCost: number
+  costPerPerson: number
+  outbound?: IntercityTransportLeg
+  inbound?: IntercityTransportLeg
+  summary?: string
 }
 
 export interface TripDay {
@@ -127,6 +202,7 @@ export interface BudgetBreakdown {
 
 export interface Trip {
   id: string
+  departureCity?: string
   destination: string
   startDate: string
   endDate: string
@@ -138,6 +214,7 @@ export interface Trip {
   hotels?: POI[]
   budget: BudgetBreakdown
   dailyBudgets?: DailyBudget[]
+  intercityTransport?: IntercityTransportPlan
   riskNotices?: RiskNotice[]
   qualityScore?: Record<string, number>
   plan?: string
@@ -208,17 +285,21 @@ export interface TripResponse {
   risk_notices?: RiskNotice[]
   weather_impacts?: Array<Record<string, any>>
   quality_score?: Record<string, number>
+  intercity_transport?: Record<string, any>
 }
 
 export interface PlanTripRequest {
   query: string
   city: string
+  departure_city?: string
   days: number
   preferences?: string[]
   budget?: string
   budget_amount?: number
   travelers?: number
   start_date?: string
+  outbound_departure_datetime?: string
+  return_arrival_datetime?: string
 }
 
 export interface AuthUser {

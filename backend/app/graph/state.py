@@ -4,12 +4,15 @@ from pydantic import BaseModel
 class TripState(TypedDict, total=False):
     query: str
     city: str
+    departure_city: Optional[str]
     days: int
     preferences: Optional[List[str]]
     budget: Optional[str]
     budget_amount: Optional[float]
     travelers: Optional[int]
     start_date: Optional[str]
+    outbound_departure_datetime: Optional[str]
+    return_arrival_datetime: Optional[str]
     query_plan: Dict[str, Any]
     execution_plan: Dict[str, Any]
     tasks: List[Dict[str, Any]]
@@ -20,6 +23,7 @@ class TripState(TypedDict, total=False):
     food_candidates: List[Dict[str, Any]]
     hotel_options: List[Dict[str, Any]]
     transport_plan: Dict[str, Any]
+    intercity_transport: Dict[str, Any]
     draft_plan: List[Dict[str, Any]]
     reviewed_plan: List[Dict[str, Any]]
     review_issues: List[Dict[str, Any]]
@@ -42,12 +46,15 @@ class TripState(TypedDict, total=False):
 class TripRequest(BaseModel):
     query: str
     city: str
+    departure_city: Optional[str] = None
     days: int
     preferences: Optional[List[str]] = None
     budget: Optional[str] = None
     budget_amount: Optional[float] = None
     travelers: Optional[int] = 1
     start_date: Optional[str] = None
+    outbound_departure_datetime: Optional[str] = None
+    return_arrival_datetime: Optional[str] = None
 
 class TripResponse(BaseModel):
     plan: str
@@ -61,6 +68,7 @@ class TripResponse(BaseModel):
     risk_notices: Optional[List[Dict[str, Any]]] = None
     weather_impacts: Optional[List[Dict[str, Any]]] = None
     quality_score: Optional[Dict[str, Any]] = None
+    intercity_transport: Optional[Dict[str, Any]] = None
 
 class PoiDetails(BaseModel):
     id: str

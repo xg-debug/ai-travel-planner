@@ -29,7 +29,26 @@ PREFERENCE_ALIASES = {
     "family": "family",
 }
 
-REAL_DATA_SOURCES = {"geo", "hotel", "agentichotel", "amap", "unsplash"}
+REAL_DATA_SOURCES = {"geo", "hotel", "agentichotel", "amap", "tencent", "unsplash"}
+
+ACTIVITY_QUERY_WORDS = (
+    "探索",
+    "探秘",
+    "攀登",
+    "登高",
+    "瞻仰",
+    "漫步",
+    "扫街",
+    "打卡",
+    "体验",
+    "游览",
+    "观光",
+    "轻徒步",
+    "徒步",
+    "咖啡时光",
+    "夜市扫街",
+    "外观光",
+)
 
 
 def dedupe(values: Sequence[str]) -> List[str]:
@@ -42,6 +61,26 @@ def dedupe(values: Sequence[str]) -> List[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def dedupe_candidates_by_name(items: Sequence[Dict[str, Any]], city: str = "") -> List[Dict[str, Any]]:
+    best_by_key: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        key = _dedupe_name_key(name, city)
+        if not key:
+            continue
+        current = best_by_key.get(key)
+        if current is None:
+            best_by_key[key] = dict(item)
+            order.append(key)
+            continue
+        if _candidate_quality(item) > _candidate_quality(current):
+            best_by_key[key] = dict(item)
+    return [best_by_key[key] for key in order if key in best_by_key]
 
 
 def normalize_preferences(preferences: Sequence[str]) -> List[str]:
@@ -70,6 +109,20 @@ def normalize_search_query(query: str, city: str) -> List[str]:
         if city and city not in compact:
             variants.append(f"{city}{compact}")
     return dedupe(variants)
+
+
+def clean_poi_search_query(value: Any, city: str = "") -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if city:
+        text = text.replace(city, "")
+    text = re.sub(r"[（(].*?[)）]", "", text)
+    for word in ACTIVITY_QUERY_WORDS:
+        text = text.replace(word, "")
+    text = re.sub(r"(之旅|路线|行程|安排|时光|半日|一日|上午|下午|夜游)$", "", text)
+    text = re.sub(r"[，。；;、/|]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def build_query_agent_fallback(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -179,7 +232,7 @@ def filter_real_candidates(
         if not candidate_has_real_source(item, allow_sources=allow_sources):
             continue
         filtered.append(dict(item))
-    return filtered
+    return dedupe_candidates_by_name(filtered)
 
 
 def build_source_metadata(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -203,7 +256,7 @@ def build_recommendation_from_candidates(
     candidates: Sequence[Dict[str, Any]],
     reasoning: str,
 ) -> Dict[str, Any]:
-    top_candidates = [item for item in list(candidates)[:5] if item.get("name")]
+    top_candidates = [item for item in dedupe_candidates_by_name(list(candidates), city)[:5] if item.get("name")]
     top_items = [str(item.get("name", "")).strip() for item in top_candidates]
     return {
         "type": category,
@@ -218,6 +271,37 @@ def build_recommendation_from_candidates(
     }
 
 
+def dedupe_recommendations(recommendations: Sequence[Dict[str, Any]], city: str = "") -> List[Dict[str, Any]]:
+    seen_global: set[str] = set()
+    cleaned: List[Dict[str, Any]] = []
+    for recommendation in recommendations or []:
+        if not isinstance(recommendation, dict):
+            continue
+        items = list(recommendation.get("items") or [])
+        details = list(recommendation.get("item_details") or recommendation.get("itemDetails") or [])
+        next_items: List[Any] = []
+        next_details: List[Dict[str, Any]] = []
+        seen_local: set[str] = set()
+        for item in items:
+            name = _recommendation_item_name(item)
+            key = _dedupe_name_key(name, city)
+            if not key or key in seen_local or key in seen_global:
+                continue
+            seen_local.add(key)
+            seen_global.add(key)
+            next_items.append(item)
+            detail = item if isinstance(item, dict) else _find_recommendation_detail(details, name, city)
+            if isinstance(detail, dict):
+                next_details.append(dict(detail))
+        if not next_items:
+            continue
+        next_recommendation = dict(recommendation)
+        next_recommendation["items"] = next_items[:5]
+        next_recommendation["item_details"] = next_details[:5]
+        cleaned.append(next_recommendation)
+    return cleaned
+
+
 def _recommendation_item_detail(item: Dict[str, Any]) -> Dict[str, Any]:
     detail: Dict[str, Any] = {}
     for key in (
@@ -229,6 +313,13 @@ def _recommendation_item_detail(item: Dict[str, Any]) -> Dict[str, Any]:
         "type",
         "rating",
         "price",
+        "price_text",
+        "price_unit",
+        "display_rating",
+        "score",
+        "score_factors",
+        "reason",
+        "reason_tags",
         "description",
         "opening_hours",
         "best_time",
@@ -350,6 +441,7 @@ def select_state_candidate_for_activity(
     used_poi_names: Iterable[str],
 ) -> Dict[str, Any] | None:
     used = set(used_poi_names)
+    source_id = str(activity.get("source_id", "") or "").strip()
     location = str(activity.get("location", "")).strip()
     title = str(activity.get("title", "")).strip()
     haystack = f"{title} {location}".strip()
@@ -364,11 +456,15 @@ def select_state_candidate_for_activity(
             name = str(item.get("name", "")).strip()
             if not name or name in used:
                 continue
+            if source_id and str(item.get("id", "") or "").strip() == source_id:
+                return item
             if location and name == location:
                 return item
             if title and name == title:
                 return item
             if haystack and name in haystack:
+                return item
+            if _candidate_name_match_score(haystack, name) >= 58:
                 return item
     return None
 
@@ -380,9 +476,10 @@ def build_poi_queries(activity: Dict[str, Any], city: str) -> List[str]:
     ]
     queries: List[str] = []
     for value in values:
-        if not value:
+        cleaned = clean_poi_search_query(value, city)
+        if not cleaned:
             continue
-        queries.extend(normalize_search_query(value, city))
+        queries.extend(normalize_search_query(cleaned, city))
     return dedupe(queries)[:4]
 
 
@@ -404,17 +501,75 @@ def pick_best_poi(
         name = str(item.get("name", "")).strip()
         if not name or name in used:
             continue
-        score = score_general_candidate(item, city, location or title, hotel=False)
+        cleaned_query = clean_poi_search_query(location or title, city)
+        score = score_general_candidate(item, city, cleaned_query, hotel=False)
         if location and name == location:
             score += 5
         if title and name == title:
             score += 4
         if location and location in name:
             score += 2
+        score += _candidate_name_match_score(f"{title} {location}", name) / 20
         if score > best_score:
             best = item
             best_score = score
     return best
+
+
+def _candidate_name_match_score(raw: str, name: str) -> float:
+    left = _compact_name(clean_poi_search_query(raw))
+    right = _compact_name(name)
+    if not left or not right:
+        return 0.0
+    if left == right:
+        return 100.0
+    if right in left:
+        return 88.0
+    if left in right:
+        return 76.0
+    overlap = len(set(left) & set(right))
+    total = max(len(set(left) | set(right)), 1)
+    return overlap / total * 70.0
+
+
+def _dedupe_name_key(value: Any, city: str = "") -> str:
+    text = str(value or "").strip()
+    if city:
+        text = text.replace(city, "")
+    return _compact_name(text)
+
+
+def _candidate_quality(item: Dict[str, Any]) -> float:
+    return (
+        _safe_float(item.get("score"), 0.0)
+        + _safe_float(item.get("rating"), 0.0) * 10
+        + (3 if item.get("image_url") else 0)
+        + (2 if item.get("address") else 0)
+        + (2 if item.get("lat") not in (None, "", 0, 0.0) and item.get("lng") not in (None, "", 0, 0.0) else 0)
+    )
+
+
+def _recommendation_item_name(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("name") or item.get("title") or "").strip()
+    return str(item or "").strip()
+
+
+def _find_recommendation_detail(details: Sequence[Any], name: str, city: str = "") -> Dict[str, Any] | None:
+    target = _dedupe_name_key(name, city)
+    if not target:
+        return None
+    for detail in details or []:
+        if not isinstance(detail, dict):
+            continue
+        detail_key = _dedupe_name_key(detail.get("name") or detail.get("title"), city)
+        if detail_key and (detail_key == target or detail_key in target or target in detail_key):
+            return detail
+    return None
+
+
+def _compact_name(value: str) -> str:
+    return re.sub(r"[^\w\u4e00-\u9fff]", "", str(value or "")).lower()
 
 
 def enrich_activity_with_poi(activity: Dict[str, Any], poi: Dict[str, Any], city: str) -> Dict[str, Any]:
@@ -471,6 +626,22 @@ def build_local_summary(state: Dict[str, Any]) -> str:
             condition = str(item.get("condition", "")).strip()
             temp = item.get("temperature", {}) or {}
             lines.append(f"- {date_text}: {condition}，{temp.get('min', '')}-{temp.get('max', '')}°C")
+        lines.append("")
+
+    intercity = state.get("intercity_transport") or (state.get("transport_plan") or {}).get("intercity_transport") or {}
+    if intercity:
+        lines.append("## 往返交通")
+        for label, leg_key in (("去程", "outbound"), ("返程", "inbound")):
+            leg = intercity.get(leg_key) or {}
+            if not leg:
+                continue
+            lines.append(
+                f"- {label}: {leg.get('from', '')} → {leg.get('to', '')}，"
+                f"{leg.get('mode', '')}，{leg.get('duration_text', '')}，"
+                f"约 {leg.get('cost_per_person', 0)} 元/人"
+            )
+        if intercity.get("total_cost"):
+            lines.append(f"- 往返合计: {intercity.get('total_cost')} CNY")
         lines.append("")
 
     for day in state.get("plan", []) or []:

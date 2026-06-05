@@ -5,6 +5,7 @@ from app.agents.shared import normalize_preferences
 
 def build_planner_prompt(state: Dict[str, Any]) -> str:
     city = state["city"]
+    departure_city = state.get("departure_city", "")
     preferences = normalize_preferences(state.get("preferences", []) or [])
     budget = state.get("budget", "中等")
     travelers = state.get("travelers", 1)
@@ -15,6 +16,7 @@ def build_planner_prompt(state: Dict[str, Any]) -> str:
 请基于以下信息，输出高质量、可落地、强旅游导向的规划结果。
 
 【输入信息】
+出发城市：{departure_city or '未填写'}
 城市：{city}
 天数：{state['days']}
 人数：{travelers}

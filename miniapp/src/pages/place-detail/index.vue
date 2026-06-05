@@ -1,17 +1,43 @@
 <template>
   <view v-if="activity" class="screen place-detail">
     <view class="place-card panel">
-      <text class="place-card__type">{{ activityTypeLabel(activity.type) }}</text>
-      <text class="place-card__title">{{ activity.location || activity.title }}</text>
+      <text class="place-card__type">{{ isTransportActivity ? '交通' : activityTypeLabel(activity.type) }}</text>
+      <text class="place-card__title">{{ isTransportActivity ? activity.title : activity.location || activity.title }}</text>
       <text class="place-card__desc">{{ activity.description }}</text>
       <view class="place-card__meta">
         <text>{{ activity.time }}</text>
-        <text>{{ activity.duration }} 分钟</text>
+        <text>{{ isTransportActivity ? `#${activity.duration}分钟` : `${activity.duration} 分钟` }}</text>
         <text>{{ formatMoney(activity.cost) }}</text>
       </view>
     </view>
 
-    <SectionPanel title="实用信息">
+    <template v-if="isTransportActivity">
+      <SectionPanel v-if="bestTransportOption" title="最佳交通方式">
+        <view class="transport-option transport-option--best">
+          <text class="transport-option__line">{{ transportOptionLine(bestTransportOption) }}</text>
+          <text class="transport-option__time">{{ transportOptionTime(bestTransportOption) }}</text>
+          <text class="transport-option__price">{{ transportOptionPrice(bestTransportOption) }}</text>
+          <text v-if="bestTransportOption.reason" class="transport-option__reason">{{ bestTransportOption.reason }}</text>
+        </view>
+      </SectionPanel>
+
+      <SectionPanel v-if="candidateTransportOptions.length" title="候选交通方式">
+        <view class="transport-options">
+          <view
+            v-for="(option, index) in candidateTransportOptions"
+            :key="`${option.mode}_${index}`"
+            class="transport-option"
+          >
+            <text class="transport-option__line">{{ index + 1 }}、{{ transportOptionLine(option) }}</text>
+            <text class="transport-option__time">{{ transportOptionTime(option) }}</text>
+            <text class="transport-option__price">{{ transportOptionPrice(option) }}</text>
+            <text v-if="option.reason" class="transport-option__reason">{{ option.reason }}</text>
+          </view>
+        </view>
+      </SectionPanel>
+    </template>
+
+    <SectionPanel v-else title="实用信息">
       <view class="info-list">
         <view class="info-row">
           <text>活动名称</text>
@@ -29,7 +55,7 @@
     </SectionPanel>
 
     <button
-      v-if="activity.coordinates"
+      v-if="!isTransportActivity && activity.coordinates"
       class="primary-button"
       @tap="openLocation"
     >
@@ -49,11 +75,35 @@ import SectionPanel from '@/components/SectionPanel.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { useTripStore } from '@/stores/tripStore'
 import { activityTypeLabel, formatMoney } from '@/utils/format'
+import type { TransportOption } from '@/types/trip'
 
 const tripStore = useTripStore()
 const dayIndex = ref(0)
 const activityIndex = ref(0)
 const activity = computed(() => tripStore.currentTrip?.days[dayIndex.value]?.activities[activityIndex.value])
+const isTransportActivity = computed(() => Boolean(activity.value?.isIntercityTransport))
+const bestTransportOption = computed<TransportOption | undefined>(() => {
+  if (!activity.value || !isTransportActivity.value) return undefined
+  return activity.value.bestTransportOption || activity.value.transportOptions?.[0] || {
+    mode: activity.value.transportation || '交通待确认',
+    fromTerminal: activity.value.fromTerminal || activity.value.location?.split(' - ')[0] || '',
+    toTerminal: activity.value.toTerminal || activity.value.location?.split(' - ')[1] || '',
+    departureDatetime: activity.value.departureDatetime,
+    arrivalDatetime: activity.value.arrivalDatetime,
+    durationMinutes: activity.value.duration,
+    durationText: `${activity.value.duration}分钟`,
+    costPerPerson: activity.value.costPerPerson || 0,
+    totalCost: activity.value.totalCost || activity.value.cost,
+    currency: 'CNY'
+  }
+})
+const candidateTransportOptions = computed(() => {
+  const source = activity.value?.transportAlternatives?.length
+    ? activity.value.transportAlternatives
+    : activity.value?.transportOptions?.slice(1) || []
+  const bestKey = bestTransportOption.value ? transportOptionKey(bestTransportOption.value) : ''
+  return source.filter((option) => transportOptionKey(option) !== bestKey)
+})
 
 onLoad((query) => {
   dayIndex.value = Number(query?.day || 0)
@@ -73,6 +123,24 @@ const openLocation = () => {
     address: activity.value.location
   })
 }
+
+const transportOptionLine = (option: TransportOption) => {
+  const route = [option.fromTerminal, option.toTerminal].filter(Boolean).join(' - ')
+  return [option.mode, route].filter(Boolean).join('  ')
+}
+
+const transportOptionTime = (option: TransportOption) => {
+  if (option.departureDatetime && option.arrivalDatetime) {
+    return `${option.departureDatetime} - ${option.arrivalDatetime}`
+  }
+  return option.durationText || `${option.durationMinutes}分钟`
+}
+
+const transportOptionPrice = (option: TransportOption) =>
+  option.costPerPerson ? `${formatMoney(option.costPerPerson)}/人` : '费用待确认'
+
+const transportOptionKey = (option: TransportOption) =>
+  `${option.mode}|${option.fromTerminal}|${option.toTerminal}|${option.departureDatetime || ''}`
 
 const back = () => {
   uni.navigateBack()
@@ -136,6 +204,49 @@ const back = () => {
 .info-list {
   display: grid;
   gap: 18rpx;
+}
+
+.transport-options {
+  display: grid;
+  gap: 18rpx;
+}
+
+.transport-option {
+  display: grid;
+  gap: 10rpx;
+  padding: 22rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 18rpx;
+  background: #fbfcff;
+}
+
+.transport-option--best {
+  background: #f7fafc;
+}
+
+.transport-option__line {
+  color: var(--text-strong);
+  font-size: 28rpx;
+  font-weight: 850;
+  line-height: 1.4;
+}
+
+.transport-option__time {
+  color: var(--text-main);
+  font-size: 24rpx;
+  line-height: 1.5;
+}
+
+.transport-option__price {
+  color: var(--teal);
+  font-size: 26rpx;
+  font-weight: 800;
+}
+
+.transport-option__reason {
+  color: var(--text-muted);
+  font-size: 23rpx;
+  line-height: 1.55;
 }
 
 .info-row {

@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { tripApi } from '@/services/tripApi'
+import { tripApi, type PlanJobResponse } from '@/services/tripApi'
 import type { Trip, TripRequest } from '@/types/trip'
 import { addDays } from '@/utils/format'
 import { convertTripResponse, mapBudgetLevel } from '@/utils/tripTransform'
@@ -16,6 +16,15 @@ export interface GenerationStep {
 
 const LAST_TRIP_KEY = 'cybertravel_last_trip'
 const DRAFT_KEY = 'cybertravel_plan_draft'
+const STEP_ALIASES: Record<string, string> = {
+  synthesizer_agent_done: 'synthesizer_agent',
+  route_grounding: 'poi_agent',
+  reflection_rerun: 'reviewer_agent'
+}
+
+const buildDateTime = (date?: string, time?: string) => (
+  date && time ? `${date} ${time}` : undefined
+)
 
 const buildSteps = (): GenerationStep[] => [
   { key: 'planner_agent', label: '拆解旅行需求', status: 'pending' },
@@ -24,7 +33,7 @@ const buildSteps = (): GenerationStep[] => [
   { key: 'food_agent', label: '安排餐饮', status: 'pending' },
   { key: 'hotel_agent', label: '推荐住宿', status: 'pending' },
   { key: 'scoring', label: '评分排序', status: 'pending' },
-  { key: 'transport_agent', label: '评估动线', status: 'pending' },
+  { key: 'transport_agent', label: '评估往返交通', status: 'pending' },
   { key: 'synthesizer_agent', label: '生成每日行程', status: 'pending' },
   { key: 'poi_agent', label: '补全地点信息', status: 'pending' },
   { key: 'reviewer_agent', label: '审查行程质量', status: 'pending' },
@@ -57,7 +66,9 @@ export const useTripStore = defineStore('trip', () => {
   const setDraft = (payload: TripRequest) => {
     draft.value = {
       ...payload,
-      endDate: payload.endDate || addDays(payload.startDate, payload.days - 1)
+      endDate: payload.endDate || addDays(payload.startDate, payload.days - 1),
+      departureTime: payload.departureTime || '08:00',
+      returnArrivalTime: payload.returnArrivalTime || '20:00'
     }
     uni.setStorageSync(DRAFT_KEY, draft.value)
   }
@@ -67,12 +78,6 @@ export const useTripStore = defineStore('trip', () => {
     steps.value = buildSteps()
     activeStepIndex.value = 0
     steps.value[0].status = 'active'
-    localTimer = setInterval(() => {
-      if (activeStepIndex.value >= steps.value.length - 2) return
-      steps.value[activeStepIndex.value].status = 'done'
-      activeStepIndex.value += 1
-      steps.value[activeStepIndex.value].status = 'active'
-    }, 1600)
   }
 
   const stopLocalProgress = () => {
@@ -88,9 +93,26 @@ export const useTripStore = defineStore('trip', () => {
 
   const markError = () => {
     stopLocalProgress()
+    activeStepIndex.value = steps.value.length - 1
     steps.value = steps.value.map((step, index) => ({
       ...step,
       status: index === activeStepIndex.value ? 'error' : step.status
+    }))
+  }
+
+  const applyRemoteProgress = (job: PlanJobResponse) => {
+    const rawStep = String(job.step || '').trim()
+    const normalizedStep = STEP_ALIASES[rawStep] || rawStep
+    if (!normalizedStep) return
+
+    const nextIndex = steps.value.findIndex((step) => step.key === normalizedStep)
+    if (nextIndex < 0) return
+
+    const targetIndex = Math.max(activeStepIndex.value, nextIndex)
+    activeStepIndex.value = targetIndex
+    steps.value = steps.value.map((step, index) => ({
+      ...step,
+      status: index < targetIndex ? 'done' : index === targetIndex ? 'active' : 'pending'
     }))
   }
 
@@ -100,20 +122,26 @@ export const useTripStore = defineStore('trip', () => {
     error.value = ''
     startLocalProgress()
     try {
+      const departureCity = draft.value.departureCity || ''
+      const outboundDepartureDatetime = buildDateTime(draft.value.startDate, draft.value.departureTime)
+      const returnArrivalDatetime = buildDateTime(draft.value.endDate, draft.value.returnArrivalTime)
       const payload = {
         query: [
           `${draft.value.destination} ${draft.value.days}日游`,
           draft.value.additionalRequirements || ''
         ].filter(Boolean).join('，'),
         city: draft.value.destination,
+        departure_city: departureCity,
         days: draft.value.days,
         preferences: draft.value.interests,
         budget: mapBudgetLevel(draft.value.budget, draft.value.days, draft.value.travelers),
         budget_amount: draft.value.budget,
         travelers: draft.value.travelers,
-        start_date: draft.value.startDate
+        start_date: draft.value.startDate,
+        outbound_departure_datetime: outboundDepartureDatetime,
+        return_arrival_datetime: returnArrivalDatetime
       }
-      const response = await tripApi.planTrip(payload)
+      const response = await tripApi.planTripWithPolling(payload, applyRemoteProgress)
       const trip = convertTripResponse(response, draft.value)
       if (!trip.days.length) throw new Error(response.plan || 'AI 未生成可用行程，请稍后重试')
 

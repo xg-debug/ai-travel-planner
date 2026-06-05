@@ -1,6 +1,6 @@
 {
   "name": "AI Travel Planner",
-  "appid": "__UNI__AI_TRAVEL_PLANNER",
+  "appid": "wxba6ff8eb7b3969cb",
   "description": "面向手机用户的 AI 旅行规划小程序",
   "versionName": "0.1.0",
   "versionCode": "10",
@@ -12,9 +12,9 @@
     }
   },
   "mp-weixin": {
-    "appid": "",
+    "appid": "wxba6ff8eb7b3969cb",
     "setting": {
-      "urlCheck": true
+      "urlCheck": false
     },
     "usingComponents": true
   }

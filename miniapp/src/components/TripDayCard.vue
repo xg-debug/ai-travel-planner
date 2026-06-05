@@ -6,13 +6,13 @@
       </view>
       <view class="day-card__title-wrap">
         <text class="day-card__title">{{ routeTitle }}</text>
-        <text class="day-card__meta">{{ formatDate(day.date) }} · {{ previewActivities.length }} 个安排 · {{ formatMoney(day.totalCost || dayCost) }}</text>
+        <text class="day-card__meta">{{ formatDate(day.date) }} · {{ routeStopCount }} 个路线点 · {{ formatMoney(day.totalCost || dayCost) }}</text>
       </view>
       <text class="day-card__arrow">›</text>
     </view>
 
     <view class="day-card__stops">
-      <view v-for="activity in previewActivities" :key="activity.id" class="day-card__stop">
+      <view v-for="activity in previewStops" :key="activity.id" class="day-card__stop">
         <text class="day-card__time">{{ activity.time }}</text>
         <view class="day-card__dot" :class="`day-card__dot--${index % 3}`" />
         <view class="day-card__stop-copy">
@@ -22,7 +22,7 @@
       </view>
     </view>
 
-    <view v-if="day.hotel" class="day-card__hotel">
+    <view v-if="day.hotel && !previewIncludesHotel" class="day-card__hotel">
       <text>住宿：{{ day.hotel.name }}</text>
     </view>
   </button>
@@ -32,7 +32,7 @@
 import { computed } from 'vue'
 import type { TripDay } from '@/types/trip'
 import { formatDate, formatMoney } from '@/utils/format'
-import { dayRouteTitle } from '@/utils/tripDisplay'
+import { dayRouteStops, dayRouteTitle } from '@/utils/tripDisplay'
 
 const props = defineProps<{
   day: TripDay
@@ -43,11 +43,15 @@ defineEmits<{
   open: []
 }>()
 
-const previewActivities = computed(() => props.day.activities.slice(0, 4))
+const routeStops = computed(() => dayRouteStops(props.day))
+const previewStops = computed(() => routeStops.value.slice(0, 5))
+const routeStopCount = computed(() => routeStops.value.length)
+const previewIncludesHotel = computed(() => previewStops.value.some((item) => item.id.startsWith('hotel_')))
 const dayCost = computed(() => props.day.activities.reduce((sum, item) => sum + Number(item.cost || 0), 0))
 const routeTitle = computed(() => dayRouteTitle(props.day).replace(/→/g, ' · '))
 
 const durationText = (minutes: number) => {
+  if (minutes === 0) return '住宿点'
   if (!minutes) return '时间待定'
   if (minutes < 60) return `${minutes}分钟`
   const hours = minutes / 60

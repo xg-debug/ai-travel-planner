@@ -1,13 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from typing import List, Optional, Dict, Any
 import logging
 import asyncio
 import json
+import threading
+import time
+import uuid
+from datetime import datetime
 from pydantic import BaseModel, Field
+from app.agents.orchestrator import llm_orchestrator_runner
 from app.graph.state import TripRequest, TripResponse, PoiDetails, WeatherInfo
-from app.graph.graph import app_trip_graph, trip_planner
-from app.orchestration.task_router import TASK_STEP_MESSAGES, get_ready_tasks, route_next_step
 from app.api.auth import get_current_user
 from app.core.database import get_db
 from app.models.trip_plan import TripPlan
@@ -18,17 +21,44 @@ from sqlalchemy.orm import Session
 from app.domain import travel_domain_service
 from app.services.recommendation_service import get_recommendations
 from app.services.budget_service import estimate_budget
+from app.services.amap_service import amap_service
 from app.services.tencent_map_service import tencent_map_service
+from app.services.runtime_config import get_map_api_key, is_present_secret
 from app.core.config import settings
 from app.services.travel_intent import normalize_trip_city_and_query
+from app.agents.shared import dedupe_recommendations
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+PLAN_JOB_TTL_SECONDS = 60 * 60
+_plan_jobs: Dict[str, Dict[str, Any]] = {}
+_plan_jobs_lock = threading.RLock()
+
+PLAN_JOB_STEP_PROGRESS = {
+    "planner_agent": 5,
+    "weather_tool": 12,
+    "attraction_agent": 22,
+    "food_agent": 32,
+    "hotel_agent": 42,
+    "scoring": 52,
+    "transport_agent": 60,
+    "synthesizer_agent": 70,
+    "synthesizer_agent_done": 78,
+    "route_grounding": 82,
+    "poi_agent": 86,
+    "reviewer_agent": 90,
+    "reflection_rerun": 92,
+    "budget": 94,
+    "risk_notice": 96,
+    "summary": 98,
+}
 
 class BudgetEstimateRequest(BaseModel):
     itinerary: List[Dict[str, Any]] = Field(default_factory=list)
     travelers: int = 1
     budget_level: str = "中等"
+    intercity_transport: Optional[Dict[str, Any]] = None
 
 class RouteOptimizeRequest(BaseModel):
     pois: List[Dict[str, Any]] = Field(default_factory=list)
@@ -56,8 +86,140 @@ class TencentRouteRequest(BaseModel):
     segments: List[TencentRouteSegmentRequest] = Field(default_factory=list)
 
 
+def _available_route_providers() -> List[str]:
+    providers: List[str] = []
+    if is_present_secret(get_map_api_key("tencent")):
+        providers.append("tencent")
+    if is_present_secret(get_map_api_key("amap")):
+        providers.append("amap")
+    return providers
+
+
+def _fallback_polyline(origin: Dict[str, Any], destination: Dict[str, Any]) -> List[Dict[str, float]]:
+    return [
+        {
+            "latitude": float(origin.get("latitude") or origin.get("lat") or 0),
+            "longitude": float(origin.get("longitude") or origin.get("lng") or origin.get("lon") or 0),
+        },
+        {
+            "latitude": float(destination.get("latitude") or destination.get("lat") or 0),
+            "longitude": float(destination.get("longitude") or destination.get("lng") or destination.get("lon") or 0),
+        },
+    ]
+
+
+def _merge_polyline(target: List[Dict[str, float]], source: List[Dict[str, float]]) -> None:
+    if not source:
+        return
+    if target:
+        target.extend(source[1:])
+    else:
+        target.extend(source)
+
+
+def _format_amap_point(point: Dict[str, Any]) -> str:
+    latitude = float(point.get("latitude") or point.get("lat") or 0)
+    longitude = float(point.get("longitude") or point.get("lng") or point.get("lon") or 0)
+    return f"{longitude},{latitude}"
+
+
+def _parse_amap_step_polyline(steps: List[Dict[str, Any]]) -> List[Dict[str, float]]:
+    points: List[Dict[str, float]] = []
+    for step in steps or []:
+        for pair in str(step.get("polyline", "") or "").split(";"):
+            values = pair.split(",")
+            if len(values) < 2:
+                continue
+            try:
+                points.append({"latitude": float(values[1]), "longitude": float(values[0])})
+            except ValueError:
+                continue
+    return points
+
+
+def _plan_amap_segment(origin: Dict[str, Any], destination: Dict[str, Any], mode: str) -> Dict[str, Any]:
+    route_mode = mode if mode in {"driving", "walking", "bicycling", "transit"} else "driving"
+    route = amap_service.calculate_route(_format_amap_point(origin), _format_amap_point(destination), route_mode)
+    polyline = _parse_amap_step_polyline(route.get("steps", []) or [])
+    if len(polyline) < 2:
+        polyline = _fallback_polyline(origin, destination)
+    return {
+        "distance": int(route.get("distance", 0) or 0),
+        "duration": int(route.get("duration", 0) or 0),
+        "polyline": polyline,
+        "provider": "amap",
+    }
+
+
+def _plan_tencent_segment(origin: Dict[str, Any], destination: Dict[str, Any], mode: str) -> Dict[str, Any]:
+    route = tencent_map_service.plan_segment(origin, destination, mode)
+    polyline = route.get("polyline", []) or _fallback_polyline(origin, destination)
+    return {
+        "distance": int(route.get("distance", 0) or 0),
+        "duration": int(route.get("duration", 0) or 0),
+        "polyline": polyline,
+        "provider": "tencent",
+    }
+
+
+def _plan_route_segment(origin: Dict[str, Any], destination: Dict[str, Any], mode: str, providers: List[str]) -> Dict[str, Any]:
+    errors: List[str] = []
+    for provider in providers:
+        try:
+            if provider == "tencent":
+                return _plan_tencent_segment(origin, destination, mode)
+            if provider == "amap":
+                return _plan_amap_segment(origin, destination, mode)
+        except Exception as exc:
+            errors.append(f"{provider}: {exc}")
+            logger.info("Route provider skipped provider=%s error=%s", provider, exc)
+    return {
+        "distance": 0,
+        "duration": 0,
+        "polyline": _fallback_polyline(origin, destination),
+        "provider": "fallback",
+        "error": " | ".join(errors) if errors else "未配置可用地图路线规划 Key，已使用坐标直线兜底",
+    }
+
+
+def _plan_day_map_route(points: List[Dict[str, Any]], mode: str) -> Dict[str, Any]:
+    if len(points) < 2:
+        return {"distance": 0, "duration": 0, "polyline": [], "legs": [], "provider": "none"}
+
+    providers = _available_route_providers()
+    if not providers:
+        logger.warning("No map route provider configured, fallback to straight point polylines")
+
+    legs: List[Dict[str, Any]] = []
+    merged_polyline: List[Dict[str, float]] = []
+    total_distance = 0
+    total_duration = 0
+    used_providers: List[str] = []
+
+    for index in range(len(points) - 1):
+        leg = _plan_route_segment(points[index], points[index + 1], mode, providers)
+        leg["fromIndex"] = index
+        leg["toIndex"] = index + 1
+        legs.append(leg)
+        total_distance += int(leg.get("distance", 0) or 0)
+        total_duration += int(leg.get("duration", 0) or 0)
+        provider = str(leg.get("provider") or "")
+        if provider and provider not in used_providers:
+            used_providers.append(provider)
+        _merge_polyline(merged_polyline, leg.get("polyline", []) or [])
+
+    return {
+        "distance": total_distance,
+        "duration": total_duration,
+        "polyline": merged_polyline,
+        "legs": legs,
+        "provider": ",".join(used_providers) or "fallback",
+    }
+
+
 class TripPlanPayload(BaseModel):
     id: Optional[str] = None
+    departureCity: Optional[str] = None
     destination: str
     startDate: str
     endDate: str
@@ -68,6 +230,7 @@ class TripPlanPayload(BaseModel):
     weather: List[Dict[str, Any]] = Field(default_factory=list)
     recommendations: List[Dict[str, Any]] = Field(default_factory=list)
     hotels: List[Dict[str, Any]] = Field(default_factory=list)
+    intercityTransport: Dict[str, Any] = Field(default_factory=dict)
     plan: str = ""
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
@@ -86,12 +249,15 @@ def _to_state(request: TripRequest) -> Dict[str, Any]:
     return {
         "query": normalized["query"],
         "city": normalized["city"],
+        "departure_city": (request.departure_city or "").strip(),
         "days": request.days,
         "preferences": request.preferences or [],
         "budget": request.budget or "中等",
         "budget_amount": request.budget_amount or 0,
         "travelers": request.travelers or 1,
         "start_date": request.start_date,
+        "outbound_departure_datetime": request.outbound_departure_datetime,
+        "return_arrival_datetime": request.return_arrival_datetime,
     }
 
 
@@ -101,14 +267,99 @@ def _to_response(result: Dict[str, Any]) -> TripResponse:
         pois=result.get("poi_data", {}),
         itinerary=result.get("plan"),
         weather=result.get("weather_data"),
-        recommendations=result.get("recommendations"),
+        recommendations=dedupe_recommendations(result.get("recommendations") or [], result.get("city", "")),
         hotels=result.get("hotel_options"),
         estimated_budget=result.get("estimated_budget"),
         daily_budgets=result.get("daily_budgets"),
         risk_notices=result.get("risk_notices"),
         weather_impacts=result.get("weather_impacts"),
         quality_score=result.get("quality_score"),
+        intercity_transport=result.get("intercity_transport") or (result.get("transport_plan") or {}).get("intercity_transport"),
     )
+
+
+def _cleanup_plan_jobs() -> None:
+    now = time.time()
+    with _plan_jobs_lock:
+        expired = [
+            job_id
+            for job_id, job in _plan_jobs.items()
+            if now - float(job.get("updated_at", job.get("created_at", now)) or now) > PLAN_JOB_TTL_SECONDS
+        ]
+        for job_id in expired:
+            _plan_jobs.pop(job_id, None)
+
+
+def _update_plan_job(job_id: str, **changes: Any) -> None:
+    with _plan_jobs_lock:
+        job = dict(_plan_jobs.get(job_id, {}))
+        job.update(changes)
+        job["updated_at"] = time.time()
+        _plan_jobs[job_id] = job
+
+
+def _update_plan_job_status(job_id: str, payload: Dict[str, Any]) -> None:
+    step = str(payload.get("step") or "").strip()
+    message = str(payload.get("message") or "").strip()
+    if not step and not message:
+        return
+    logger.info("Plan job progress job_id=%s step=%s message=%s", job_id, step, message)
+    changes: Dict[str, Any] = {
+        "step": step,
+        "message": message,
+        "progress": PLAN_JOB_STEP_PROGRESS.get(step, 0),
+    }
+    _update_plan_job(job_id, **changes)
+
+
+def _run_plan_job(job_id: str, state: Dict[str, Any]) -> None:
+    logger.info("Plan job started job_id=%s city=%s days=%s", job_id, state.get("city"), state.get("days"))
+    try:
+        result: Dict[str, Any] = {}
+        for event in llm_orchestrator_runner.stream(state):
+            event_name = event.get("event")
+            data = event.get("data") or {}
+            if event_name == "status":
+                _update_plan_job_status(job_id, data)
+                continue
+            if event_name == "result":
+                result = dict(data.get("state", {}) or {})
+        if not result:
+            raise RuntimeError("LLM 主控智能体未生成最终行程")
+        response = _to_response(result)
+        if not response.itinerary:
+            raise RuntimeError("AI未生成可用行程，请稍后重试")
+        _update_plan_job(
+            job_id,
+            status="completed",
+            step="summary",
+            message="行程规划已完成",
+            progress=100,
+            result=response.model_dump(),
+            error="",
+        )
+        logger.info("Plan job completed job_id=%s city=%s", job_id, state.get("city"))
+    except Exception as exc:
+        logger.exception("Plan job failed job_id=%s error=%s", job_id, exc)
+        _update_plan_job(
+            job_id,
+            status="failed",
+            progress=0,
+            error=_friendly_error_message(str(exc)),
+            raw_error=str(exc),
+        )
+
+
+def _parse_request_datetime(value: Any) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    raise ValueError("出发和返程时间格式必须为 YYYY-MM-DD HH:MM")
 
 
 def _validate_trip_state(state: Dict[str, Any]) -> None:
@@ -121,14 +372,29 @@ def _validate_trip_state(state: Dict[str, Any]) -> None:
         raise ValueError("旅行天数必须大于0")
     if days > settings.MAX_TRIP_DAYS:
         raise ValueError(f"旅行天数不能超过{settings.MAX_TRIP_DAYS}天")
+    outbound_departure = _parse_request_datetime(state.get("outbound_departure_datetime"))
+    return_arrival = _parse_request_datetime(state.get("return_arrival_datetime"))
+    if outbound_departure and return_arrival and return_arrival <= outbound_departure:
+        raise ValueError("返程到达时间必须晚于去程出发时间")
 
 
 def _friendly_error_message(error_text: str) -> str:
+    lower = error_text.lower()
     if "Insufficient Balance" in error_text or "402" in error_text:
         return "AI服务余额不足，请充值或更换可用模型"
+    if (
+        "invalid_api_key" in lower
+        or "api key not valid" in lower
+        or "invalid x-api-key" in lower
+        or "incorrect api key" in lower
+        or "authentication_error" in lower
+    ):
+        return "AI模型密钥无效，请在后端环境变量或管理后台中配置至少一个真实可用的 OpenAI/Anthropic/Google/DeepSeek Key，并移除占位 key"
     if "未检测到可用的 LLM API Key" in error_text or "未配置" in error_text:
         return "未配置可用的AI模型密钥，请先在后端环境变量中配置 OpenAI/Anthropic/Google/DeepSeek Key"
-    if "timed out" in error_text.lower() or "timeout" in error_text.lower():
+    if "所有模型调用失败" in error_text:
+        return "所有AI模型调用均失败，请检查默认模型服务是否可访问、API Key 是否有效，或增大 LLM_REQUEST_TIMEOUT_SECONDS 后重试"
+    if "timed out" in lower or "timeout" in lower:
         return "AI服务响应超时，请稍后重试（可检查模型服务连通性）"
     if "真实景点候选不足" in error_text:
         return "未查询到足够的真实景点数据，请换一个更具体的城市或稍后重试"
@@ -140,7 +406,7 @@ def _friendly_error_message(error_text: str) -> str:
 
 
 def _sse(event: str, data: Dict[str, Any]) -> str:
-    payload = json.dumps(data, ensure_ascii=False)
+    payload = json.dumps(data, ensure_ascii=False, default=str)
     return f"event: {event}\ndata: {payload}\n\n"
 
 @router.post("/plan", response_model=TripResponse)
@@ -159,7 +425,7 @@ async def plan_trip(request: TripRequest):
     
     try:
         _validate_trip_state(state)
-        result = app_trip_graph.invoke(state)
+        result = llm_orchestrator_runner.run(state)
         response = _to_response(result)
 
         if not response.itinerary:
@@ -172,8 +438,66 @@ async def plan_trip(request: TripRequest):
         logger.error(f"Validation error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Error planning trip: {e}")
+        logger.exception("Error planning trip: %s", e)
         raise HTTPException(status_code=500, detail=_friendly_error_message(str(e)))
+
+
+@router.post("/plan/jobs")
+async def start_plan_job(request: TripRequest, background_tasks: BackgroundTasks):
+    """
+    启动异步行程规划任务。
+
+    小程序端长时间等待同步 /plan 容易触发 request 超时，因此使用短请求启动任务，再轮询结果。
+    """
+    state = _to_state(request)
+    logger.info("Starting plan job: %s for %s days", state["city"], state["days"])
+    try:
+        _validate_trip_state(state)
+    except ValueError as exc:
+        logger.error("Validation error: %s", exc)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    _cleanup_plan_jobs()
+    job_id = uuid.uuid4().hex
+    now = time.time()
+    with _plan_jobs_lock:
+        _plan_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "running",
+            "city": state.get("city", ""),
+            "days": state.get("days", 0),
+            "step": "planner_agent",
+            "message": "规划任务已启动",
+            "progress": PLAN_JOB_STEP_PROGRESS["planner_agent"],
+            "created_at": now,
+            "updated_at": now,
+            "result": None,
+            "error": "",
+        }
+    background_tasks.add_task(_run_plan_job, job_id, state)
+    return {"job_id": job_id, "status": "running"}
+
+
+@router.get("/plan/jobs/{job_id}")
+async def get_plan_job(job_id: str):
+    _cleanup_plan_jobs()
+    with _plan_jobs_lock:
+        job = _plan_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="规划任务不存在或已过期")
+        return {
+            "job_id": job.get("job_id", job_id),
+            "status": job.get("status", "running"),
+            "city": job.get("city", ""),
+            "days": job.get("days", 0),
+            "step": job.get("step", ""),
+            "message": job.get("message", ""),
+            "progress": job.get("progress", 0),
+            "result": job.get("result"),
+            "error": job.get("error", ""),
+            "created_at": job.get("created_at"),
+            "updated_at": job.get("updated_at"),
+        }
 
 
 @router.get("/plans")
@@ -308,76 +632,23 @@ async def plan_trip_stream(request: TripRequest):
     async def event_generator():
         try:
             _validate_trip_state(state)
-            loop_count = 0
-
-            yield _sse("status", {"step": "planner_agent", "message": TASK_STEP_MESSAGES.get("planner_agent", "理解旅行需求并拆分执行任务")})
-            await asyncio.sleep(0)
-            state.update(trip_planner.nodes["planner_agent"](state))
-
-            yield _sse("status", {"step": "weather_tool", "message": "通过天气工具获取天气信息"})
-            await asyncio.sleep(0)
-            state.update(trip_planner.nodes["weather_tool"](state))
-
-            while True:
-                loop_count += 1
-                if loop_count > 64:
-                    raise RuntimeError("任务工作流执行次数超过上限，疑似进入循环。")
-                next_step = route_next_step(state)
-                if next_step == "budget":
-                    break
-                if next_step == "workflow_error":
-                    yield _sse("status", {"step": "workflow_error", "message": "任务调度出现阻塞，正在中止本次规划"})
-                    await asyncio.sleep(0)
-                    state.update(trip_planner.nodes["workflow_error"](state))
-                    break
-                if next_step == "parallel_tasks":
-                    ready_tasks = get_ready_tasks(state)
-                    for task in ready_tasks:
-                        step = str(task.get("step", ""))
-                        yield _sse("status", {"step": step, "message": TASK_STEP_MESSAGES.get(step, "正在并行执行任务")})
-                    await asyncio.sleep(0)
-                    state.update(trip_planner.nodes["parallel_tasks"](state))
-                    continue
-
-                yield _sse("status", {"step": next_step, "message": TASK_STEP_MESSAGES.get(next_step, "正在执行任务")})
+            final_state = None
+            for event in llm_orchestrator_runner.stream(state):
                 await asyncio.sleep(0)
-                state.update(trip_planner.nodes[next_step](state))
+                if event["event"] == "status":
+                    yield _sse("status", event["data"])
+                    continue
+                if event["event"] == "result":
+                    final_state = event["data"]["state"]
 
-                if next_step == "synthesizer_agent":
-                    yield _sse(
-                        "status",
-                        {"step": "synthesizer_agent_done", "message": "行程草案已生成", "days": len(state.get("plan", []))},
-                    )
-                if next_step == "reviewer_agent" and state.get("reflection_context", {}).get("action") == "rerun_synthesizer":
-                    yield _sse(
-                        "status",
-                        {
-                            "step": "reflection_rerun",
-                            "message": "审查发现关键问题，正在重生成行程草案",
-                            "issues": len(state.get("review_issues", []) or []),
-                        },
-                    )
-
-            yield _sse("status", {"step": "budget", "message": "计算预算"})
-            await asyncio.sleep(0)
-            state.update(trip_planner.nodes["budget"](state))
-
-            yield _sse("status", {"step": "risk_notice", "message": "生成避坑提醒"})
-            await asyncio.sleep(0)
-            state.update(trip_planner.nodes["risk_notice"](state))
-
-            yield _sse("status", {"step": "summary", "message": "整理最终输出"})
-            await asyncio.sleep(0)
-            state.update(trip_planner.nodes["summary"](state))
-
-            response = _to_response(state)
+            response = _to_response(final_state or {})
             if not response.itinerary:
                 raise ValueError("AI未生成可用行程")
 
             yield _sse("result", response.model_dump())
             yield _sse("done", {"ok": True})
         except Exception as exc:
-            logger.error("Error in stream planning: %s", exc)
+            logger.exception("Error in stream planning: %s", exc)
             yield _sse("error", {"message": _friendly_error_message(str(exc))})
 
     return StreamingResponse(
@@ -516,7 +787,7 @@ async def estimate_trip_budget(request: BudgetEstimateRequest):
     logger.info(f"Estimating budget for {request.travelers} travelers")
     
     try:
-        budget = estimate_budget(request.itinerary, request.travelers, request.budget_level)
+        budget = estimate_budget(request.itinerary, request.travelers, request.budget_level, None, request.intercity_transport)
         return budget
         
     except Exception as e:
@@ -563,21 +834,23 @@ async def calculate_trip_route(request: RouteCalculateRequest):
         raise HTTPException(status_code=500, detail="路线计算失败")
 
 
+@router.post("/route/map")
 @router.post("/route/tencent")
-async def calculate_tencent_trip_routes(request: TencentRouteRequest):
+async def calculate_map_trip_routes(request: TencentRouteRequest):
     """
-    使用腾讯位置服务计算多日路线。
+    计算多日路线。
 
-    前端小程序原生 map 组件使用腾讯地图渲染，这里只负责把每天点位转成真实道路 polyline。
+    前端小程序原生 map 组件使用 GCJ-02 坐标渲染。后端优先使用可用地图服务生成道路 polyline，
+    如果真实路线规划不可用，则返回坐标直线兜底，避免地图大图页失败。
     """
-    logger.info("Calculating Tencent routes for %s day segments by %s", len(request.segments), request.mode)
+    logger.info("Calculating map routes for %s day segments by %s", len(request.segments), request.mode)
 
     try:
         segments = []
         for segment in request.segments:
             if len(segment.points) < 2:
                 continue
-            route = tencent_map_service.plan_day_route(
+            route = _plan_day_map_route(
                 [point.model_dump() for point in segment.points],
                 request.mode,
             )
@@ -587,11 +860,11 @@ async def calculate_tencent_trip_routes(request: TencentRouteRequest):
             })
         return {"mode": request.mode, "segments": segments}
     except RuntimeError as exc:
-        logger.error("Tencent route calculation error: %s", exc)
+        logger.error("Map route calculation error: %s", exc)
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
-        logger.error("Error calculating Tencent routes: %s", exc)
-        raise HTTPException(status_code=500, detail="腾讯地图路线规划失败，请稍后重试")
+        logger.exception("Error calculating map routes: %s", exc)
+        raise HTTPException(status_code=500, detail="地图路线规划失败，请稍后重试")
 
 @router.get("/health")
 async def health_check():

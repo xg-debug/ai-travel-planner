@@ -96,13 +96,47 @@ def _dedupe_food_candidates(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
     return result
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value in (None, ""):
+            return default
+        matched = re.search(r"\d+(?:\.\d+)?", str(value))
+        return float(matched.group()) if matched else default
+    except Exception:
+        return default
+
+
+def _format_food_price(value: Any) -> str:
+    price = _safe_float(value, 0.0)
+    if price <= 0:
+        return ""
+    return f"¥{price:.2f}/人"
+
+
+def _with_food_display_fields(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    enriched: List[Dict[str, Any]] = []
+    for index, item in enumerate(items):
+        next_item = dict(item)
+        rating = _safe_float(next_item.get("rating"), 0.0)
+        if rating > 0:
+            next_item["display_rating"] = round(min(rating, 5.0), 1)
+        else:
+            next_item["display_rating"] = round(max(4.6, 5.0 - index * 0.1), 1)
+        next_item["price_unit"] = "person"
+        price_text = _format_food_price(next_item.get("price"))
+        if price_text:
+            next_item["price_text"] = price_text
+        enriched.append(next_item)
+    return enriched
+
+
 def food_search_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     city = state["city"]
     task = get_ready_task_for_step(state, "food_agent")
     task_inputs = task.get("inputs", {}) if task else {}
     queries = task_inputs.get("queries") or [f"{city}本地特色美食", f"{city}老字号美食", f"{city}代表性小吃", f"{city}美食街区"]
     react_result = food_react_agent.run(state, queries, task=task)
-    candidates = _dedupe_food_candidates(filter_real_candidates(react_result["items"]))
+    candidates = _with_food_display_fields(_dedupe_food_candidates(filter_real_candidates(react_result["items"])))
     recommendations = list(state.get("recommendations", []) or [])
     if candidates:
         recommendations.append(

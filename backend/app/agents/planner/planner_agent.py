@@ -132,6 +132,10 @@ def _build_execution_plan(state: Dict[str, Any], query_plan: Dict[str, Any]) -> 
     }
 
 
+def build_baseline_query_plan(state: Dict[str, Any]) -> Dict[str, Any]:
+    return _build_query_plan(state, None)
+
+
 def planner_agent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     query_plan = _build_query_plan(state, None)
     execution_plan = _build_execution_plan(state, query_plan)

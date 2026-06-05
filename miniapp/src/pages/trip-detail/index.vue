@@ -47,6 +47,28 @@
       </view>
     </view>
 
+    <SectionPanel v-if="intercityTransport" title="往返交通">
+      <view class="transport-list">
+        <view
+          v-for="leg in intercityLegs"
+          :key="leg.direction"
+          class="transport-leg"
+        >
+          <view class="transport-leg__main">
+            <text class="transport-leg__route">{{ transportLegTitle(leg) }}</text>
+            <text class="transport-leg__time">{{ transportTimeText(leg) }}</text>
+          </view>
+          <view class="transport-leg__meta">
+            <text>{{ formatTransportMoney(transportCostPerPerson(leg), leg.costPending) }}/人</text>
+          </view>
+        </view>
+        <view class="transport-total">
+          <text>往返交通合计</text>
+          <text>{{ formatTransportMoney(intercityTransport.totalCost, intercityTransport.costPending) }}</text>
+        </view>
+      </view>
+    </SectionPanel>
+
     <SectionPanel v-if="routeDays.length" title="路线地图">
       <template #action>
         <button class="section-link" @tap="openRouteMap">查看大图</button>
@@ -125,8 +147,8 @@ import RouteMapPreview from '@/components/RouteMapPreview.vue'
 import RecommendationRail from '@/components/RecommendationRail.vue'
 import { useTripStore } from '@/stores/tripStore'
 import { calculateDays, formatMoney } from '@/utils/format'
-import { tripAttractions, tripFood, tripHotels, tripMapActivities } from '@/utils/tripDisplay'
-import type { Activity, POI } from '@/types/trip'
+import { dayRouteStops, tripAttractions, tripFood, tripHotels, tripMapActivities } from '@/utils/tripDisplay'
+import type { Activity, IntercityTransportLeg, POI } from '@/types/trip'
 
 const tripStore = useTripStore()
 const { currentTrip: trip } = storeToRefs(tripStore)
@@ -144,6 +166,11 @@ const foodItems = computed(() => tripFood(trip.value))
 const hotelItems = computed(() => tripHotels(trip.value))
 const routeActivities = computed(() => tripMapActivities(trip.value))
 const routeDays = computed(() => trip.value?.days || [])
+const intercityTransport = computed(() => trip.value?.intercityTransport)
+const intercityLegs = computed<IntercityTransportLeg[]>(() => {
+  const transport = intercityTransport.value
+  return [transport?.outbound, transport?.inbound].filter(Boolean) as IntercityTransportLeg[]
+})
 const attractionCount = computed(() => Math.max(attractionItems.value.length, activityCount.value))
 const heroSubtitle = computed(() => {
   const tags = trip.value?.interests?.filter(Boolean).slice(0, 3)
@@ -155,6 +182,26 @@ const perPersonBudget = computed(() => {
   const travelers = Math.max(Number(trip.value?.travelers || 1), 1)
   return total ? `${formatMoney(total / travelers)}/人` : '待估算'
 })
+
+const formatTransportMoney = (value?: number | string, pending?: boolean) =>
+  pending ? '待估算' : formatMoney(value)
+const transportBestOption = (leg: IntercityTransportLeg) => leg.bestOption || leg.options?.[0]
+const transportLegTitle = (leg: IntercityTransportLeg) => {
+  const option = transportBestOption(leg)
+  const mode = option?.mode || leg.mode || '交通待确认'
+  return `${transportDirectionLabel(leg.direction)}：${leg.from} → ${leg.to}   ${mode}`
+}
+const transportTimeText = (leg: IntercityTransportLeg) => {
+  const option = transportBestOption(leg)
+  const departure = option?.departureDatetime || leg.departureDatetime
+  const arrival = option?.arrivalDatetime || leg.arrivalDatetime
+  if (departure && arrival) {
+    return `${departure} - ${arrival}`
+  }
+  return option?.durationText || leg.durationText || `${option?.durationMinutes || leg.durationMinutes}分钟`
+}
+const transportCostPerPerson = (leg: IntercityTransportLeg) =>
+  transportBestOption(leg)?.costPerPerson || leg.costPerPerson
 
 onShow(() => {
   tripStore.restoreLocal()
@@ -170,7 +217,7 @@ const goPlan = () => {
 
 const openRouteMap = () => {
   const hasDayRoute = (trip.value?.days || []).some((day) =>
-    day.activities.filter((item) => item.coordinates).length >= 2
+    dayRouteStops(day).filter((item) => item.coordinates).length >= 2
   )
   if (!hasDayRoute) {
     uni.showToast({ title: '路线坐标生成后可打开地图', icon: 'none' })
@@ -199,6 +246,8 @@ const showBudgetTip = () => {
 const showListTip = (name: string) => {
   uni.showToast({ title: `${name}清单已展示重点推荐`, icon: 'none' })
 }
+
+const transportDirectionLabel = (direction: string) => direction === 'inbound' ? '返程' : '去程'
 
 const findActivityByPoi = (poi: POI) => {
   const keyword = poi.name.trim().toLowerCase()
@@ -337,6 +386,68 @@ const distanceBetween = (a: { lat: number; lng: number }, b: { lat: number; lng:
   background: transparent;
   font-size: 24rpx;
   line-height: 1.4;
+}
+
+.transport-list {
+  display: grid;
+  gap: 14rpx;
+}
+
+.transport-leg,
+.transport-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18rpx;
+  min-width: 0;
+  padding: 20rpx;
+  border: 1rpx solid var(--line);
+  border-radius: 18rpx;
+  background: #ffffff;
+}
+
+.transport-leg__main,
+.transport-leg__meta {
+  display: grid;
+  min-width: 0;
+}
+
+.transport-leg__label {
+  color: var(--text-muted);
+  font-size: 21rpx;
+  font-weight: 800;
+}
+
+.transport-leg__route {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 28rpx;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transport-leg__time {
+  margin-top: 8rpx;
+  color: var(--text-main);
+  font-size: 22rpx;
+  font-weight: 650;
+}
+
+.transport-leg__meta {
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: 5rpx;
+  color: var(--text-main);
+  font-size: 22rpx;
+  font-weight: 750;
+}
+
+.transport-total {
+  color: var(--text-strong);
+  background: #f7fafc;
+  font-size: 26rpx;
+  font-weight: 900;
 }
 
 .day-list {

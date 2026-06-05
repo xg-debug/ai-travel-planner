@@ -101,8 +101,9 @@ def budget_node(state: Dict[str, Any]) -> Dict[str, Any]:
     plan = state.get("plan", [])
     travelers = state.get("travelers", 1)
     budget_level = state.get("budget", "中等")
+    intercity_transport = state.get("intercity_transport") or (state.get("transport_plan") or {}).get("intercity_transport") or {}
 
-    estimated_budget = estimate_budget(plan, travelers, budget_level)
+    estimated_budget = estimate_budget(plan, travelers, budget_level, state.get("budget_amount") or None, intercity_transport)
     if state.get("budget_amount"):
         estimated_budget["requested_total"] = int(float(state.get("budget_amount") or 0))
         estimated_budget["is_over_budget"] = int(estimated_budget.get("total") or 0) > estimated_budget["requested_total"]
@@ -114,7 +115,12 @@ def budget_node(state: Dict[str, Any]) -> Dict[str, Any]:
         if index < len(daily_budgets):
             next_day["budget"] = daily_budgets[index]
         enriched_plan.append(next_day)
-    return {"plan": enriched_plan or plan, "estimated_budget": estimated_budget, "daily_budgets": daily_budgets}
+    return {
+        "plan": enriched_plan or plan,
+        "estimated_budget": estimated_budget,
+        "daily_budgets": daily_budgets,
+        "intercity_transport": intercity_transport,
+    }
 
 
 def risk_notice_node(state: Dict[str, Any]) -> Dict[str, Any]:

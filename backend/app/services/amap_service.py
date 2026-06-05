@@ -173,7 +173,7 @@ class AMapService:
                     })
                 return pois
             else:
-                logger.warning(f"No POIs found for {keyword} in {city}")
+                logger.debug(f"No POIs found for {keyword} in {city}")
                 return []
                 
         except Exception as e:
@@ -296,7 +296,11 @@ class AMapService:
                 raise RuntimeError(f"未找到从 {origin} 到 {destination} 的路线")
                 
         except Exception as e:
-            logger.error(f"Error calculating route: {e}")
+            message = str(e)
+            if "未找到从" in message or "高德路线规划要求使用有效经纬度坐标" in message:
+                logger.debug(f"Route calculation skipped: {e}")
+            else:
+                logger.error(f"Error calculating route: {e}")
             raise
     
     def _parse_weather_data(self, weather_data: Dict[str, Any], city: str, days: int) -> Dict[str, Any]:

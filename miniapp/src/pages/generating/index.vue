@@ -14,6 +14,7 @@
         </view>
 
         <view class="summary-card__meta">
+          <text v-if="draft?.departureCity">{{ draft.departureCity }}出发</text>
           <text>{{ draft?.days || 0 }} 天</text>
           <text>{{ draft?.travelers || 0 }} 人</text>
           <text>{{ activeText }}</text>
