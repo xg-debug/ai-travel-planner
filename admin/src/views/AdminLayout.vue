@@ -113,9 +113,9 @@ const menuItems = computed<ItemType[]>(() => {
       label: '平台趋势'
     },
     {
-      key: 'agent',
+      key: 'runtime',
       icon: () => h(RobotOutlined),
-      label: 'Agent 状态'
+      label: '运行状态'
     }
   ]
 

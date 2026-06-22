@@ -26,7 +26,7 @@
               <text class="activity__price">{{ formatMoney(activity.cost) }}</text>
             </view>
             <text class="activity__location">{{ activity.location }}</text>
-            <text class="activity__desc">{{ activity.description }}</text>
+            <text class="activity__desc">{{ activityDescription(activity) }}</text>
             <view class="activity__tags">
               <text>{{ activityTagLabel(activity) }}</text>
               <text>{{ activityDurationTag(activity) }}</text>
@@ -41,6 +41,7 @@
       <view class="hotel">
         <text class="hotel__name">{{ day.hotel.name }}</text>
         <text v-if="day.hotel.address" class="hotel__line">{{ day.hotel.address }}</text>
+        <text v-if="day.hotel.referencePriceRange" class="hotel__reference">{{ day.hotel.referencePriceRange }}</text>
         <text v-if="day.hotel.reason" class="hotel__desc">{{ day.hotel.reason }}</text>
         <text v-if="day.hotel.priceEstimate" class="hotel__price">{{ formatHotelPrice(day.hotel.priceEstimate) }}</text>
       </view>
@@ -88,8 +89,29 @@ const openPlace = (activityIndex: number) => {
 }
 
 const formatHotelPrice = (value: number | string) => {
+  if (String(value || '').includes('实时')) return '实时价待查'
   return typeof value === 'number' ? `${formatMoney(value)}/晚` : value
 }
+
+const activityDescription = (activity: Activity) => {
+  const location = String(activity.location || '').trim()
+  const description = String(activity.description || '').trim()
+  if (!description) return ''
+  let cleaned = description
+  if (location) {
+    cleaned = cleaned
+      .replace(new RegExp(`^${escapeRegExp(location)}(位于|位於)?`, 'i'), '')
+      .replace(new RegExp(escapeRegExp(location), 'g'), '')
+  }
+  cleaned = cleaned
+    .replace(/^位于|^位於/, '')
+    .replace(/([；;，,。])\s*\1+/g, '$1')
+    .replace(/^[；;，,。\s]+|[；;，,。\s]+$/g, '')
+    .trim()
+  return cleaned || description
+}
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const activityTagLabel = (activity: Activity) =>
   activity.isIntercityTransport ? '#交通' : activityTypeLabel(activity.type)
@@ -238,10 +260,16 @@ const back = () => {
 }
 
 .hotel__line,
+.hotel__reference,
 .hotel__desc {
   color: var(--text-main);
   font-size: 26rpx;
   line-height: 1.55;
+}
+
+.hotel__reference {
+  color: var(--teal);
+  font-weight: 800;
 }
 
 .hotel__price {

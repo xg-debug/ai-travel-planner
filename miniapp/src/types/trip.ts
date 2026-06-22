@@ -1,3 +1,5 @@
+export type AccommodationPreference = 'budget' | 'mid-range' | 'luxury'
+
 export interface TripRequest {
   departureCity: string
   destination: string
@@ -8,13 +10,8 @@ export interface TripRequest {
   days: number
   travelers: number
   interests: string[]
-  budget: number
-  preferences?: {
-    pace?: 'relaxed' | 'moderate' | 'fast'
-    accommodation?: 'budget' | 'mid-range' | 'luxury'
-    food?: 'local' | 'international' | 'mixed'
-    transportation?: 'public' | 'private' | 'mixed'
-  }
+  budgetAmount: number
+  accommodationPreference: AccommodationPreference
   additionalRequirements?: string
 }
 
@@ -47,6 +44,8 @@ export interface Activity {
   cost: number
   ticketPrice?: number
   ticketLabel?: string
+  openingHours?: string
+  priceNote?: string
   notes?: string
   reason?: string
   score?: number
@@ -74,6 +73,8 @@ export interface HotelRecommendation {
   name: string
   address?: string
   priceEstimate?: number | string
+  referencePriceRange?: string
+  budgetPricePerRoom?: number
   reason?: string
   rating?: number
   coordinates?: {
@@ -180,6 +181,12 @@ export interface POI {
   description: string
   priceRange: 'free' | '$' | '$$' | '$$$' | '$$$$'
   priceText?: string
+  avgCost?: number
+  priceSource?: string
+  priceConfidence?: string
+  priceNote?: string
+  referencePriceRange?: string
+  budgetPricePerRoom?: number
   address?: string
   openingHours?: string
   website?: string
@@ -208,6 +215,7 @@ export interface Trip {
   endDate: string
   travelers: number
   interests: string[]
+  accommodationPreference?: AccommodationPreference
   days: TripDay[]
   weather: WeatherForecast[]
   recommendations: POI[]
@@ -288,19 +296,7 @@ export interface TripResponse {
   intercity_transport?: Record<string, any>
 }
 
-export interface PlanTripRequest {
-  query: string
-  city: string
-  departure_city?: string
-  days: number
-  preferences?: string[]
-  budget?: string
-  budget_amount?: number
-  travelers?: number
-  start_date?: string
-  outbound_departure_datetime?: string
-  return_arrival_datetime?: string
-}
+export type PlanTripRequest = TripRequest
 
 export interface AuthUser {
   id: string

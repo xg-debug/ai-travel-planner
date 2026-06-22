@@ -76,13 +76,17 @@ import EmptyState from '@/components/EmptyState.vue'
 import { useTripStore } from '@/stores/tripStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { activityTypeLabel, formatMoney } from '@/utils/format'
-import type { TransportOption } from '@/types/trip'
+import type { Activity, POI, TransportOption } from '@/types/trip'
 
 const tripStore = useTripStore()
 const themeStore = useThemeStore()
 const dayIndex = ref(0)
 const activityIndex = ref(0)
-const activity = computed(() => tripStore.currentTrip?.days[dayIndex.value]?.activities[activityIndex.value])
+const poiKey = ref('')
+const activity = computed<Activity | undefined>(() => {
+  if (poiKey.value) return poiToActivity(findPoiByKey(poiKey.value))
+  return tripStore.currentTrip?.days[dayIndex.value]?.activities[activityIndex.value]
+})
 const isTransportActivity = computed(() => Boolean(activity.value?.isIntercityTransport))
 const bestTransportOption = computed<TransportOption | undefined>(() => {
   if (!activity.value || !isTransportActivity.value) return undefined
@@ -110,6 +114,7 @@ const candidateTransportOptions = computed(() => {
 onLoad((query) => {
   dayIndex.value = Number(query?.day || 0)
   activityIndex.value = Number(query?.activity || 0)
+  poiKey.value = decodeURIComponent(String(query?.poi || ''))
 })
 
 onShow(() => {
@@ -119,11 +124,10 @@ onShow(() => {
 
 const openLocation = () => {
   if (!activity.value?.coordinates) return
-  uni.openLocation({
-    latitude: activity.value.coordinates.lat,
-    longitude: activity.value.coordinates.lng,
-    name: activity.value.location || activity.value.title,
-    address: activity.value.location
+  const name = activity.value.location || activity.value.title
+  const address = activity.value.notes || activity.value.location || ''
+  uni.navigateTo({
+    url: `/pages/route-map/index?lat=${activity.value.coordinates.lat}&lng=${activity.value.coordinates.lng}&name=${encodeURIComponent(name)}&address=${encodeURIComponent(address)}`
   })
 }
 
@@ -144,6 +148,47 @@ const transportOptionPrice = (option: TransportOption) =>
 
 const transportOptionKey = (option: TransportOption) =>
   `${option.mode}|${option.fromTerminal}|${option.toTerminal}|${option.departureDatetime || ''}`
+
+const findPoiByKey = (key: string): POI | undefined => {
+  const normalized = key.trim().toLowerCase()
+  if (!normalized) return undefined
+  const candidates = [
+    ...(tripStore.currentTrip?.recommendations || []),
+    ...(tripStore.currentTrip?.hotels || [])
+  ]
+  return candidates.find((item) => {
+    const id = String(item.id || '').trim().toLowerCase()
+    const name = String(item.name || '').trim().toLowerCase()
+    return id === normalized || name === normalized
+  })
+}
+
+const poiToActivity = (poi?: POI): Activity | undefined => {
+  if (!poi) return undefined
+  const isHotel = poi.type === 'hotel'
+  return {
+    id: poi.id,
+    time: isHotel ? '20:00' : '时间待定',
+    title: poi.name,
+    description: poi.description || `${poi.name}适合纳入本次行程。`,
+    location: poi.name,
+    type: poi.type === 'restaurant'
+      ? 'food'
+      : poi.type === 'shop'
+        ? 'shopping'
+        : poi.type === 'hotel'
+          ? 'other'
+          : 'culture',
+    duration: isHotel ? 0 : 90,
+    cost: 0,
+    ticketLabel: poi.priceText,
+    openingHours: poi.openingHours,
+    priceNote: poi.priceNote,
+    notes: [poi.address, poi.openingHours, poi.priceNote].filter(Boolean).join(' · '),
+    image: poi.images?.[0],
+    coordinates: poi.location?.lat && poi.location?.lng ? poi.location : undefined
+  }
+}
 
 const back = () => {
   uni.navigateBack()

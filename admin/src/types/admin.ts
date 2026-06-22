@@ -88,7 +88,7 @@ export interface ProviderOption {
   maskedKey?: string | null
 }
 
-export interface AgentStatus {
+export interface RuntimeStatus {
   llm: {
     provider: string
     providerLabel: string

@@ -18,7 +18,8 @@ from app.services.admin_access import AdminPrincipal, require_admin, require_sup
 from app.services.runtime_config import (
     LLM_PROVIDERS,
     MAP_PROVIDERS,
-    build_agent_config_snapshot,
+    build_runtime_config_snapshot,
+    normalize_llm_model,
     set_setting_value,
 )
 from app.services.user_roles import (
@@ -241,12 +242,12 @@ def overview(
     }
 
 
-@router.get("/agent-status")
-def agent_status(
+@router.get("/runtime-status")
+def runtime_status(
     _principal: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    snapshot = build_agent_config_snapshot(db)
+    snapshot = build_runtime_config_snapshot(db)
     selected_llm = next(
         item for item in snapshot["llm"]["providers"] if item["id"] == snapshot["llm"]["provider"]
     )
@@ -275,7 +276,7 @@ def get_settings(
     _principal: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    return build_agent_config_snapshot(db)
+    return build_runtime_config_snapshot(db)
 
 
 @router.put("/settings")
@@ -291,10 +292,11 @@ def update_settings(
                 raise HTTPException(status_code=400, detail="不支持的大模型供应商")
             set_setting_value(db, "llm.provider", provider, principal.user.id)
         else:
-            provider = str(build_agent_config_snapshot(db)["llm"]["provider"])
+            provider = str(build_runtime_config_snapshot(db)["llm"]["provider"])
 
-        if payload.llm.model is not None and payload.llm.model.strip():
-            set_setting_value(db, "llm.model", payload.llm.model.strip(), principal.user.id)
+        normalized_model = normalize_llm_model(provider, payload.llm.model)
+        if normalized_model:
+            set_setting_value(db, "llm.model", normalized_model, principal.user.id)
 
         if payload.llm.api_key is not None and payload.llm.api_key.strip():
             api_key_setting = LLM_PROVIDERS[provider]["api_key_setting"]
@@ -307,14 +309,14 @@ def update_settings(
                 raise HTTPException(status_code=400, detail="不支持的地图供应商")
             set_setting_value(db, "map.provider", provider, principal.user.id)
         else:
-            provider = str(build_agent_config_snapshot(db)["map"]["provider"])
+            provider = str(build_runtime_config_snapshot(db)["map"]["provider"])
 
         if payload.map.api_key is not None and payload.map.api_key.strip():
             api_key_setting = MAP_PROVIDERS[provider]["api_key_setting"]
             set_setting_value(db, api_key_setting, payload.map.api_key.strip(), principal.user.id)
 
     db.commit()
-    return build_agent_config_snapshot(db)
+    return build_runtime_config_snapshot(db)
 
 
 @router.get("/users")

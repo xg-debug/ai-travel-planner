@@ -16,14 +16,18 @@
         <text class="day-card__time">{{ activity.time }}</text>
         <view class="day-card__dot" :class="`day-card__dot--${index % 3}`" />
         <view class="day-card__stop-copy">
-          <text class="day-card__spot">{{ activity.location || activity.title }}</text>
+          <text class="day-card__spot">{{ displayStopName(activity) }}</text>
           <text class="day-card__duration">{{ durationText(activity.duration) }}</text>
         </view>
       </view>
     </view>
 
     <view v-if="day.hotel && !previewIncludesHotel" class="day-card__hotel">
-      <text>住宿：{{ day.hotel.name }}</text>
+      <view class="day-card__hotel-icon">🏨</view>
+      <view class="day-card__hotel-copy">
+        <text class="day-card__hotel-name">{{ day.hotel.name }}</text>
+        <text v-if="hotelAddressText" class="day-card__hotel-addr">{{ hotelAddressText }}</text>
+      </view>
     </view>
   </button>
 </template>
@@ -32,7 +36,7 @@
 import { computed } from 'vue'
 import type { TripDay } from '@/types/trip'
 import { formatDate, formatMoney } from '@/utils/format'
-import { dayRouteStops, dayRouteTitle } from '@/utils/tripDisplay'
+import { dayRouteStops, dayRouteTitle, displayStopName } from '@/utils/tripDisplay'
 
 const props = defineProps<{
   day: TripDay
@@ -49,6 +53,12 @@ const routeStopCount = computed(() => routeStops.value.length)
 const previewIncludesHotel = computed(() => previewStops.value.some((item) => item.id.startsWith('hotel_')))
 const dayCost = computed(() => props.day.activities.reduce((sum, item) => sum + Number(item.cost || 0), 0))
 const routeTitle = computed(() => dayRouteTitle(props.day).replace(/→/g, ' · '))
+const hotelAddressText = computed(() => {
+  const address = String(props.day.hotel?.address || '').trim()
+  const name = String(props.day.hotel?.name || '').trim()
+  if (!address || address === name || address.includes(name)) return ''
+  return address
+})
 
 const durationText = (minutes: number) => {
   if (minutes === 0) return '住宿点'
@@ -194,11 +204,40 @@ const durationText = (minutes: number) => {
 }
 
 .day-card__hotel {
+  display: flex;
+  align-items: flex-start;
+  gap: 14rpx;
   margin-top: 18rpx;
-  padding: 14rpx 18rpx;
+  padding: 16rpx 18rpx;
   border-radius: 14rpx;
-  color: var(--text-main);
-  background: #f6f7f9;
-  font-size: 22rpx;
+  background: linear-gradient(135deg, #f5f3ff, #efe9ff);
+}
+
+.day-card__hotel-icon {
+  flex: 0 0 36rpx;
+  font-size: 28rpx;
+  line-height: 36rpx;
+}
+
+.day-card__hotel-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.day-card__hotel-name {
+  display: block;
+  color: var(--text-strong);
+  font-size: 24rpx;
+  font-weight: 750;
+}
+
+.day-card__hotel-addr {
+  display: block;
+  overflow: hidden;
+  margin-top: 4rpx;
+  color: var(--text-muted);
+  font-size: 20rpx;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

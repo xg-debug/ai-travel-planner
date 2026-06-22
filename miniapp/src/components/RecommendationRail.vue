@@ -1,7 +1,7 @@
 <template>
   <view class="rec-grid">
     <button
-      v-for="(item, index) in items.slice(0, 4)"
+      v-for="(item, index) in displayItems"
       :key="item.id || item.name"
       class="rec-card"
       :class="variantClass"
@@ -13,7 +13,7 @@
       </view>
       <view class="rec-card__body">
         <text class="rec-card__title">{{ item.name }}</text>
-        <text class="rec-card__desc">{{ item.description }}</text>
+        <text class="rec-card__desc">{{ descriptionOf(item) }}</text>
         <view class="rec-card__meta">
           <text v-if="item.rating">{{ item.rating.toFixed(1) }}分</text>
           <text>{{ priceOf(item) }}</text>
@@ -38,7 +38,7 @@ defineEmits<{
   open: [item: POI]
 }>()
 
-const fallbackImages = {
+const fallbackImages: Record<string, string[]> = {
   attraction: [
     '/static/recommendations/attraction-1.png',
     '/static/recommendations/attraction-2.png'
@@ -54,11 +54,13 @@ const fallbackImages = {
 }
 
 const failedCovers = reactive<Record<string, boolean>>({})
+
 const variantClass = computed(() => props.variant)
+const displayItems = computed(() => uniqueDisplayItems(props.items).slice(0, 4))
 
 const coverOf = (item: POI, index: number) => {
   const image = normalizeCoverUrl(item.images?.[0])
-  if (image && !failedCovers[coverKey(item, index)]) return image
+  if (image && !failedCovers[coverKey(item, index)] && !isRepeatedImage(image, item, index)) return image
   return fallbackOf(item, index)
 }
 
@@ -84,6 +86,38 @@ const fallbackOf = (item: POI, index: number) => {
   return group[index % group.length]
 }
 
+const isRepeatedImage = (image: string, item: POI, index: number) => {
+  const normalized = normalizeCoverUrl(image)
+  if (!normalized) return false
+  return displayItems.value.slice(0, index).some((previous, previousIndex) => {
+    if (canonicalPoiKey(previous) === canonicalPoiKey(item)) return true
+    const previousImage = normalizeCoverUrl(previous.images?.[0])
+    return previousImage && previousImage === normalized && !failedCovers[coverKey(previous, previousIndex)]
+  })
+}
+
+const uniqueDisplayItems = (items: POI[]) => {
+  const seen = new Set<string>()
+  const result: POI[] = []
+  for (const item of items || []) {
+    const key = canonicalPoiKey(item)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    result.push(item)
+  }
+  return result
+}
+
+const canonicalPoiKey = (item: POI) => {
+  const name = compactText(item.name)
+    .replace(/^(杭州|郑州|北京|上海|广州|深圳|南京|苏州|成都|重庆|西安|天津)/, '')
+    .replace(/\s+/g, '')
+  if (!name) return ''
+  const parent = name.split(/[-—–·]/)[0]
+  if (/风景名胜区|风景区|景区|公园|度假区|古镇|古城/.test(parent)) return parent
+  return name.replace(/游客中心|售票处|停车场|入口|出口|服务中心/g, '')
+}
+
 const tagOf = (item: POI) => {
   if (item.type === 'restaurant') return '美食'
   if (item.type === 'hotel') return '优选'
@@ -92,7 +126,36 @@ const tagOf = (item: POI) => {
   return '推荐'
 }
 
+const descriptionOf = (item: POI) => {
+  const address = compactText(item.address)
+  const name = compactText(item.name)
+  const description = compactText(item.description)
+    .replace(new RegExp(`^${escapeRegExp(name)}(位于|位於)?`, 'i'), '')
+    .replace(/^位于|^位於/, '')
+    .trim()
+
+  const withoutRepeatedAddress = address
+    ? description
+        .replace(new RegExp(escapeRegExp(address), 'g'), '')
+        .replace(/[；;，,\s]*$/, '')
+        .trim()
+    : description
+
+  if (withoutRepeatedAddress && withoutRepeatedAddress.length >= 8) return withoutRepeatedAddress
+  return address || item.category || tagOf(item)
+}
+
+const compactText = (value?: string) =>
+  String(value || '')
+    .replace(/\s+/g, ' ')
+    .replace(/([；;，,。])\s*\1+/g, '$1')
+    .replace(/^[；;，,。\s]+|[；;，,。\s]+$/g, '')
+    .trim()
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 const priceOf = (item: POI) => {
+  if (item.type === 'hotel') return item.priceText || item.referencePriceRange || '参考价待查'
   if (item.priceText) return item.priceText
   if (item.priceRange === 'free') return '免费'
   const map: Record<string, string> = {
@@ -158,13 +221,9 @@ const priceOf = (item: POI) => {
   padding: 14rpx;
 }
 
-.rec-card__title,
-.rec-card__desc {
+.rec-card__title {
   display: block;
   overflow: hidden;
-}
-
-.rec-card__title {
   color: var(--text-strong);
   font-size: 24rpx;
   font-weight: 850;

@@ -34,31 +34,19 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
     DEEPSEEK_API_KEY: Optional[str] = os.getenv("DEEPSEEK_API_KEY")
     GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
-    UNSPLASH_ACCESS_KEY: Optional[str] = os.getenv("UNSPLASH_ACCESS_KEY")
-    UNSPLASH_SECRET_KEY: Optional[str] = os.getenv("UNSPLASH_SECRET_KEY")
     
     # 地图服务配置
+    MAP_PROVIDER: Optional[str] = os.getenv("MAP_PROVIDER")
     AMAP_API_KEY: Optional[str] = os.getenv("AMAP_API_KEY")
     TENCENT_MAP_API_KEY: Optional[str] = os.getenv("TENCENT_MAP_API_KEY")
-    BAIDU_MAP_API_KEY: Optional[str] = os.getenv("BAIDU_MAP_API_KEY")
+    AMAP_MCP_SSE_URL: Optional[str] = os.getenv("AMAP_MCP_SSE_URL")
+    AMAP_MCP_SSE_MESSAGE_URL: Optional[str] = os.getenv("AMAP_MCP_SSE_MESSAGE_URL")
+    AMAP_MCP_API_KEY: Optional[str] = os.getenv("AMAP_MCP_API_KEY")
+    AMAP_MCP_HEADERS: Optional[str] = os.getenv("AMAP_MCP_HEADERS")
+    AMAP_MCP_TOOL_OVERRIDES: Optional[str] = os.getenv("AMAP_MCP_TOOL_OVERRIDES")
+    AMAP_MCP_CONNECT_TIMEOUT: float = float(os.getenv("AMAP_MCP_CONNECT_TIMEOUT", "20"))
+    AMAP_MCP_REQUEST_TIMEOUT: float = float(os.getenv("AMAP_MCP_REQUEST_TIMEOUT", "60"))
     
-    # 天气服务配置
-    WEATHER_API_KEY: Optional[str] = os.getenv("WEATHER_API_KEY")
-    
-    # 旅游数据API
-    TRIP_ADVISOR_API_KEY: Optional[str] = os.getenv("TRIP_ADVISOR_API_KEY")
-    YELP_API_KEY: Optional[str] = os.getenv("YELP_API_KEY")
-
-    # 酒店 MCP 配置
-    HOTEL_PROVIDER: str = os.getenv("HOTEL_PROVIDER", "auto")
-    ROLLINGGO_API_KEY: Optional[str] = os.getenv("ROLLINGGO_API_KEY")
-    AIGOHOTEL_API_KEY: Optional[str] = os.getenv("AIGOHOTEL_API_KEY")
-    AGENTICHOTEL_MCP_COMMAND: str = os.getenv("AGENTICHOTEL_MCP_COMMAND", "uvx")
-    AGENTICHOTEL_MCP_ARGS: str = os.getenv("AGENTICHOTEL_MCP_ARGS", "--from rollinggo-mcp rollinggo-mcp")
-    AGENTICHOTEL_MCP_CWD: Optional[str] = os.getenv("AGENTICHOTEL_MCP_CWD")
-    AGENTICHOTEL_MCP_STARTUP_TIMEOUT: float = float(os.getenv("AGENTICHOTEL_MCP_STARTUP_TIMEOUT", "20"))
-    AGENTICHOTEL_MCP_REQUEST_TIMEOUT: float = float(os.getenv("AGENTICHOTEL_MCP_REQUEST_TIMEOUT", "60"))
-
     # 安全配置
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
     ALGORITHM: str = "HS256"
@@ -82,13 +70,20 @@ class Settings(BaseSettings):
     LOG_FILE: Optional[str] = os.getenv("LOG_FILE")
     
     # 模型配置
-    DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "openai")
-    DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gpt-3.5-turbo")
+    DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "deepseek")
+    DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "deepseek-v4-flash")
+
+    # Centralised provider → default model mapping
+    PROVIDER_DEFAULT_MODELS: dict = {
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-sonnet-4-6",
+        "google": "gemini-2.5-flash",
+        "deepseek": "deepseek-v4-flash",
+    }
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))
     LLM_REQUEST_TIMEOUT_SECONDS: int = int(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "45"))
     LLM_MAX_RETRIES: int = int(os.getenv("LLM_MAX_RETRIES", "1"))
-    ENABLE_LLM_RECOMMENDATION: bool = os.getenv("ENABLE_LLM_RECOMMENDATION", "false").lower() == "true"
     
     # 行程规划配置
     MAX_TRIP_DAYS: int = int(os.getenv("MAX_TRIP_DAYS", "7"))
@@ -98,5 +93,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"
 
 settings = Settings()

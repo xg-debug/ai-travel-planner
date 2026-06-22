@@ -1,5 +1,5 @@
 <template>
-  <view v-if="trip" :class="['route-map-page', themeStore.themeClass]">
+  <view v-if="canShowMapPage" :class="['route-map-page', themeStore.themeClass]">
     <map
       v-if="hasMapData"
       class="route-map"
@@ -13,7 +13,7 @@
       enable-scroll
       @markertap="handleMarkerTap"
     >
-      <cover-view class="map-tabs">
+      <cover-view v-if="!singlePlace" class="map-tabs">
         <cover-view class="map-tab" :class="{ active: selectedDay === -1 }" @tap="selectDay(-1)">全程</cover-view>
         <cover-view
           v-for="segment in daySegments"
@@ -29,7 +29,19 @@
 
       <cover-view class="map-locate" @tap="focusCurrentRoute">⌖</cover-view>
 
-      <cover-view v-if="selectedDay >= 0 && currentPoint" class="place-card">
+      <cover-view v-if="routeWarningText" class="route-warning">{{ routeWarningText }}</cover-view>
+
+      <cover-view v-if="singlePlace" class="single-place-card">
+        <cover-view class="single-place-card__title">{{ singlePlace.name }}</cover-view>
+        <cover-view class="single-place-card__address">{{ singlePlace.address || '已定位到该地点' }}</cover-view>
+        <cover-view class="single-place-card__actions">
+          <cover-view class="single-place-card__action" @tap="back">返回</cover-view>
+          <cover-view class="single-place-card__action" @tap="copySinglePlaceAddress">复制地址</cover-view>
+          <cover-view class="single-place-card__action single-place-card__action--primary" @tap="openSinglePlaceInNativeMap">导航</cover-view>
+        </cover-view>
+      </cover-view>
+
+      <cover-view v-else-if="selectedDay >= 0 && currentPoint" class="place-card">
         <cover-view class="place-card__photo">
           <cover-image v-if="currentPoint.image" class="place-card__image" :src="currentPoint.image" />
           <cover-view v-else class="place-card__photo-fallback">DAY {{ currentPoint.dayIndex + 1 }}</cover-view>
@@ -38,13 +50,13 @@
           <cover-view class="place-card__title">{{ currentPoint.title }}</cover-view>
           <cover-view class="place-card__meta">{{ currentCardMeta }}</cover-view>
           <cover-view class="place-card__actions">
-            <cover-view class="place-card__action" @tap="showPoiTip">+</cover-view>
-            <cover-view class="place-card__action" @tap="showPoiTip">↗</cover-view>
+            <cover-view class="place-card__action" @tap="openCurrentPointDetail">详</cover-view>
+            <cover-view class="place-card__action" @tap="openCurrentPointInNativeMap">↗</cover-view>
           </cover-view>
         </cover-view>
       </cover-view>
 
-      <cover-view v-if="selectedDay >= 0 && currentSegment" class="step-rail">
+      <cover-view v-if="!singlePlace && selectedDay >= 0 && currentSegment" class="step-rail">
         <cover-view
           v-for="(point, index) in currentSegment.points"
           :key="point.key"
@@ -71,7 +83,7 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onLoad, onShow } from '@dcloudio/uni-app'
 import { useTripStore } from '@/stores/tripStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { tripApi } from '@/services/tripApi'
@@ -82,6 +94,7 @@ type RoutePoint = {
   markerId: number
   dayIndex: number
   index: number
+  activityIndex: number
   title: string
   latitude: number
   longitude: number
@@ -98,8 +111,23 @@ type MapRoutePlan = {
   distance: number
   duration: number
   polyline: Array<{ latitude: number; longitude: number }>
-  legs?: Array<Record<string, unknown>>
+  legs?: Array<{
+    distance?: number
+    duration?: number
+    polyline?: Array<{ latitude: number; longitude: number }>
+    provider?: string
+    error?: string
+  }>
   provider?: string
+  partial?: boolean
+  warning?: string
+}
+
+type SinglePlace = {
+  name: string
+  address: string
+  latitude: number
+  longitude: number
 }
 
 const routeColors = ['#32B7D9', '#21BFA4', '#FF6A7A', '#F59E0B', '#8B5CF6', '#0F172A']
@@ -109,11 +137,24 @@ const themeStore = useThemeStore()
 const selectedDay = ref(-1)
 const selectedPointKey = ref('')
 const routePlans = ref<Record<number, MapRoutePlan>>({})
+const singlePlace = ref<SinglePlace | null>(null)
 const trip = computed(() => tripStore.currentTrip)
+const canShowMapPage = computed(() => Boolean(singlePlace.value || trip.value))
+
+onLoad((query) => {
+  const latitude = Number(query?.lat)
+  const longitude = Number(query?.lng)
+  if (Number.isFinite(latitude) && Number.isFinite(longitude) && latitude && longitude) {
+    const name = decodeURIComponent(String(query?.name || '目的地'))
+    const address = decodeURIComponent(String(query?.address || ''))
+    singlePlace.value = { name, address, latitude, longitude }
+  }
+})
 
 onShow(() => {
   themeStore.restore()
   tripStore.restoreLocal()
+  if (singlePlace.value) return
   selectedDay.value = -1
   selectedPointKey.value = ''
   loadMapRoutes()
@@ -124,11 +165,13 @@ const daySegments = computed<RouteSegment[]>(() => (trip.value?.days || []).map(
   points: dayRouteStops(day)
     .map((activity, index) => {
       if (!activity.coordinates) return null
+      const activityIndex = day.activities.indexOf(activity)
       return {
         key: `${dayIndex}-${index}`,
         markerId: dayIndex * 1000 + index,
         dayIndex,
         index,
+        activityIndex: activityIndex >= 0 ? activityIndex : index,
         title: activity.location || activity.title,
         latitude: activity.coordinates.lat,
         longitude: activity.coordinates.lng,
@@ -139,16 +182,32 @@ const daySegments = computed<RouteSegment[]>(() => (trip.value?.days || []).map(
 })).filter((item) => item.points.length >= 2))
 
 const visibleSegments = computed(() => {
+  if (singlePlace.value) return []
   if (selectedDay.value < 0) return daySegments.value
   return daySegments.value.filter((item) => item.dayIndex === selectedDay.value)
 })
 
-const hasMapData = computed(() => visibleSegments.value.some((item) => item.points.length >= 2))
+const hasMapData = computed(() => Boolean(singlePlace.value || visibleSegments.value.some((item) => item.points.length >= 2)))
 const showPendingTab = computed(() => daySegments.value.length <= 3)
+const routeWarningText = computed(() => {
+  if (singlePlace.value || !daySegments.value.length) return ''
+  if (!Object.keys(routePlans.value).length) return '正在生成真实道路路线'
+  const failedDays = visibleSegments.value
+    .filter((segment) => !hasRealRoute(routePlans.value[segment.dayIndex]))
+    .map((segment) => segment.dayIndex + 1)
+  if (!failedDays.length) return ''
+  return `DAY ${failedDays.join('、')} 部分路段待地图服务确认`
+})
 
 const allVisiblePoints = computed(() => visibleSegments.value.flatMap((segment) => segment.points))
 
 const center = computed(() => {
+  if (singlePlace.value) {
+    return {
+      latitude: singlePlace.value.latitude,
+      longitude: singlePlace.value.longitude
+    }
+  }
   const first = allVisiblePoints.value[0]
   return {
     latitude: first?.latitude || 39.9042,
@@ -156,18 +215,18 @@ const center = computed(() => {
   }
 })
 
-const mapScale = computed(() => (selectedDay.value >= 0 ? 13 : 12))
+const mapScale = computed(() => (singlePlace.value ? 16 : selectedDay.value >= 0 ? 13 : 12))
 
 const routePointsFor = (segment: RouteSegment) => {
   const planned = routePlans.value[segment.dayIndex]?.polyline || []
-  if (planned.length >= 2) return planned
-  return segment.points.map((point) => ({
-    latitude: point.latitude,
-    longitude: point.longitude
-  }))
+  if (planned.length >= 2 && hasRealRoute(routePlans.value[segment.dayIndex])) return planned
+  return []
 }
 
 const includePoints = computed(() =>
+  singlePlace.value
+    ? [{ latitude: singlePlace.value.latitude, longitude: singlePlace.value.longitude }]
+    :
   visibleSegments.value.flatMap((segment) => [
     ...segment.points.map((point) => ({
       latitude: point.latitude,
@@ -188,6 +247,36 @@ const markerPointMap = computed(() => {
 })
 
 const markers = computed(() => {
+  if (singlePlace.value) {
+    return [{
+      id: 1,
+      latitude: singlePlace.value.latitude,
+      longitude: singlePlace.value.longitude,
+      width: 34,
+      height: 34,
+      title: singlePlace.value.name,
+      label: {
+        content: singlePlace.value.name,
+        color: '#FFFFFF',
+        fontSize: 14,
+        borderRadius: 12,
+        bgColor: '#111827',
+        padding: 9,
+        anchorX: -34,
+        anchorY: -38
+      },
+      callout: {
+        content: singlePlace.value.name,
+        display: 'ALWAYS',
+        borderRadius: 8,
+        padding: 8,
+        fontSize: 12,
+        color: '#0F172A',
+        bgColor: '#FFFFFF'
+      }
+    }]
+  }
+
   if (selectedDay.value < 0) {
     return visibleSegments.value.map((segment) => {
       const middlePoint = segment.points[Math.floor(segment.points.length / 2)] || segment.points[0]
@@ -247,15 +336,34 @@ const markers = computed(() => {
 })
 
 const polylines = computed(() =>
-  visibleSegments.value.map((segment) => ({
-    points: routePointsFor(segment),
+  singlePlace.value
+    ? []
+    :
+  visibleSegments.value.flatMap((segment) => routePolylineGroups(segment).map((points) => ({
+    points,
     color: routeColors[segment.dayIndex % routeColors.length],
     width: selectedDay.value >= 0 ? 8 : 7,
     arrowLine: true,
     borderColor: '#FFFFFF',
     borderWidth: 2
-  }))
+  })))
 )
+
+const routePolylineGroups = (segment: RouteSegment) => {
+  const plan = routePlans.value[segment.dayIndex]
+  const legGroups = (plan?.legs || [])
+    .map((leg) => leg.polyline || [])
+    .filter((points) => points.length >= 2)
+  if (legGroups.length) return legGroups
+  const merged = routePointsFor(segment)
+  return merged.length >= 2 ? [merged] : []
+}
+
+const hasRealRoute = (plan?: MapRoutePlan) => {
+  if (!plan) return false
+  if (plan.provider && plan.provider.split(',').every((item) => item === 'fallback' || item === 'none')) return false
+  return (plan.polyline || []).length >= 2 || (plan.legs || []).some((leg) => (leg.polyline || []).length >= 2)
+}
 
 const currentSegment = computed(() => {
   if (selectedDay.value < 0) return null
@@ -272,9 +380,12 @@ const currentCardMeta = computed(() => {
   const point = currentPoint.value
   if (!point) return ''
   const plan = routePlans.value[point.dayIndex]
+  if (plan && !hasRealRoute(plan)) {
+    return `DAY ${point.dayIndex + 1} · 第 ${point.index + 1} 站 · 路线待确认`
+  }
   const distance = formatDistance(plan?.distance || 0)
   const duration = formatDuration(plan?.duration || 0)
-  const routeText = distance ? ` · ${distance}${duration ? ` ${duration}` : ''}` : ''
+  const routeText = distance ? ` · ${distance}${duration ? ` ${duration}` : ''}` : ' · 部分路段待确认'
   return `DAY ${point.dayIndex + 1} · 第 ${point.index + 1} 站${routeText}`
 })
 
@@ -297,15 +408,52 @@ const handleMarkerTap = (event: any) => {
 }
 
 const focusCurrentRoute = () => {
-  uni.showToast({ title: '已聚焦当前路线', icon: 'none' })
+  uni.showToast({ title: singlePlace.value ? '已聚焦当前地点' : '已聚焦当前路线', icon: 'none' })
 }
 
 const showTodoTip = () => {
   uni.showToast({ title: '待计划点位后续可加入路线', icon: 'none' })
 }
 
-const showPoiTip = () => {
-  uni.showToast({ title: '地点操作即将开放', icon: 'none' })
+const openCurrentPointDetail = () => {
+  const point = currentPoint.value
+  if (!point) return
+  uni.navigateTo({
+    url: `/pages/place-detail/index?day=${point.dayIndex}&activity=${point.activityIndex}`
+  })
+}
+
+const openCurrentPointInNativeMap = () => {
+  const point = currentPoint.value
+  if (!point) return
+  uni.openLocation({
+    latitude: point.latitude,
+    longitude: point.longitude,
+    name: point.title,
+    address: point.title
+  })
+}
+
+const copySinglePlaceAddress = () => {
+  if (!singlePlace.value) return
+  uni.setClipboardData({
+    data: singlePlace.value.address || singlePlace.value.name,
+    success: () => uni.showToast({ title: '地址已复制', icon: 'none' })
+  })
+}
+
+const openSinglePlaceInNativeMap = () => {
+  if (!singlePlace.value) return
+  uni.openLocation({
+    latitude: singlePlace.value.latitude,
+    longitude: singlePlace.value.longitude,
+    name: singlePlace.value.name,
+    address: singlePlace.value.address || singlePlace.value.name
+  })
+}
+
+const back = () => {
+  uni.navigateBack()
 }
 
 const loadMapRoutes = async () => {
@@ -321,7 +469,7 @@ const loadMapRoutes = async () => {
   if (!segments.length) return
 
   try {
-    const response = await tripApi.planMapRoutes({ mode: 'driving', segments })
+    const response = await tripApi.planMapRoutes({ mode: 'touring', segments })
     const nextPlans: Record<number, MapRoutePlan> = {}
     ;(response?.segments || []).forEach((segment: MapRoutePlan) => {
       nextPlans[segment.dayIndex] = segment
@@ -415,6 +563,22 @@ const formatDuration = (seconds: number) => {
   text-align: center;
 }
 
+.route-warning {
+  position: absolute;
+  left: 34rpx;
+  right: 34rpx;
+  top: 118rpx;
+  min-height: 56rpx;
+  padding: 0 22rpx;
+  border-radius: 28rpx;
+  background: rgba(15, 23, 42, 0.78);
+  color: #ffffff;
+  font-size: 23rpx;
+  font-weight: 800;
+  line-height: 56rpx;
+  text-align: center;
+}
+
 .place-card {
   position: absolute;
   left: 34rpx;
@@ -491,6 +655,64 @@ const formatDuration = (seconds: number) => {
   font-weight: 900;
   line-height: 58rpx;
   text-align: center;
+}
+
+.single-place-card {
+  position: absolute;
+  left: 30rpx;
+  right: 30rpx;
+  bottom: 54rpx;
+  box-sizing: border-box;
+  min-height: 210rpx;
+  padding: 30rpx;
+  border-radius: 28rpx;
+  background: rgba(255, 255, 255, 0.97);
+}
+
+.single-place-card__title {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 36rpx;
+  font-weight: 900;
+  line-height: 46rpx;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.single-place-card__address {
+  display: -webkit-box;
+  margin-top: 12rpx;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 24rpx;
+  font-weight: 700;
+  line-height: 34rpx;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.single-place-card__actions {
+  display: flex;
+  gap: 14rpx;
+  margin-top: 24rpx;
+}
+
+.single-place-card__action {
+  flex: 1;
+  min-width: 0;
+  height: 64rpx;
+  border-radius: 32rpx;
+  background: #eef2f7;
+  color: #0f172a;
+  font-size: 24rpx;
+  font-weight: 850;
+  line-height: 64rpx;
+  text-align: center;
+}
+
+.single-place-card__action--primary {
+  background: #111827;
+  color: #ffffff;
 }
 
 .step-rail {

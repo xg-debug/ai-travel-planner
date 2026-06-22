@@ -87,6 +87,39 @@ def _parse_location(value: Any) -> tuple[float, float]:
     return 0.0, 0.0
 
 
+def _price_metadata(biz_ext: Dict[str, Any], poi_type: str) -> Dict[str, Any]:
+    price = _safe_text(biz_ext.get("cost") or biz_ext.get("price"), "")
+    if not price:
+        return {
+            "avg_cost": 0,
+            "price_source": "",
+            "price_confidence": "unknown",
+            "price_note": "",
+        }
+
+    type_text = str(poi_type or "")
+    if any(token in type_text for token in ("餐饮", "美食", "餐厅", "小吃", "咖啡")):
+        note = "高德地点参考人均消费，实际价格会随门店、时段和点单变化。"
+        unit = "per_person"
+    elif any(token in type_text for token in ("风景名胜", "景点", "博物", "展览", "公园")):
+        note = "高德地点参考消费信息，不保证等同景区实时门票。"
+        unit = "reference"
+    elif any(token in type_text for token in ("酒店", "住宿", "宾馆", "旅馆")):
+        note = "高德地点消费信息不能代表酒店实时房价，请以预订平台为准。"
+        unit = "reference"
+    else:
+        note = "高德地点参考消费信息，实际价格可能波动。"
+        unit = "reference"
+
+    return {
+        "avg_cost": _safe_int(price, 0),
+        "price_source": "amap_biz_ext_cost",
+        "price_confidence": "reference",
+        "price_unit": unit,
+        "price_note": note,
+    }
+
+
 def _is_valid_route_coordinate(value: str) -> bool:
     try:
         lng_text, lat_text = str(value).split(",")[:2]
@@ -151,20 +184,23 @@ class AMapService:
                 pois = []
                 for poi in data["pois"][:size]:
                     biz_ext = _safe_dict(poi.get("biz_ext"))
+                    poi_type_text = _safe_text(poi.get("type"))
                     photos = poi.get("photos") or []
                     image_url = ""
                     if photos and isinstance(photos, list):
                         image_url = photos[0].get("url", "") or ""
                     lng, lat = _parse_location(poi.get("location"))
+                    price_meta = _price_metadata(biz_ext, poi_type_text)
                     pois.append({
                         "id": poi.get("id"),
                         "name": _safe_text(poi.get("name")),
                         "lat": lat,
                         "lng": lng,
                         "address": _safe_text(poi.get("address"), city),
-                        "type": _safe_text(poi.get("type")),
+                        "type": poi_type_text,
                         "rating": _safe_float(biz_ext.get("rating"), 0.0),
                         "price": _safe_text(biz_ext.get("cost"), ""),
+                        **price_meta,
                         "description": f"{_safe_text(poi.get('name'))}位于{_safe_text(poi.get('address'), city)}",
                         "opening_hours": _safe_text(biz_ext.get("opentime"), ""),
                         "image_url": image_url,
@@ -180,28 +216,6 @@ class AMapService:
             logger.error(f"Error searching POIs: {e}")
             raise
 
-    def search_hotels(self, keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
-        """
-        酒店搜索专用封装。
-        仍基于高德 POI 搜索，但附加酒店类型过滤，适合当前免费方案。
-        """
-        hotel_queries = [keyword, f"{city}酒店", f"{city}宾馆"]
-        results: List[Dict[str, Any]] = []
-        seen = set()
-        for hotel_query in hotel_queries:
-            pois = self.search_pois(hotel_query, city, page, size, poi_type="住宿服务")
-            for poi in pois:
-                name = _safe_text(poi.get("name"))
-                if not name or name in seen:
-                    continue
-                price_text = _safe_text(poi.get("price"), "")
-                poi["price"] = price_text if price_text and price_text != "免费" else ""
-                seen.add(name)
-                results.append(poi)
-                if len(results) >= size:
-                    return results
-        return results
-    
     def get_weather_forecast(self, city: str, days: int = 3) -> Dict[str, Any]:
         """
         获取天气预报
@@ -276,8 +290,9 @@ class AMapService:
                 "key": self.api_key,
                 "origin": origin,
                 "destination": destination,
-                "strategy": self._get_route_strategy(mode)
             }
+            if mode == "driving":
+                params["strategy"] = self._get_route_strategy(mode)
             
             response = requests.get(f"{self.base_url}/direction/{mode}", params=params, timeout=10)
             response.raise_for_status()
@@ -378,9 +393,6 @@ amap_service = AMapService()
 # 导出函数
 def search_pois(keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
     return amap_service.search_pois(keyword, city, page, size)
-
-def search_hotels(keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
-    return amap_service.search_hotels(keyword, city, page, size)
 
 def get_weather_forecast(city: str, days: int = 3) -> Dict[str, Any]:
     return amap_service.get_weather_forecast(city, days)

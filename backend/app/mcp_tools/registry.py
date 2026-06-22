@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict
 
-from app.mcp_tools.agentichotel_provider import AgenticHotelMCPProvider
+from app.mcp_tools.amap_sse_provider import AMapSSEMCPProvider
 from app.mcp_tools.amap_provider import AMapMCPProvider
 from app.mcp_tools.base import MCPToolProvider
 from app.mcp_tools.tencent_provider import TencentMapMCPProvider
@@ -14,21 +14,18 @@ class MCPToolRegistry:
 
     def __init__(self):
         self._providers: Dict[str, MCPToolProvider] = {}
-        self._agentic_hotel_provider: MCPToolProvider | None = None
 
     def register(self, capability: str, provider: MCPToolProvider) -> None:
         self._providers[capability] = provider
 
-    def register_agentic_hotel(self, provider: MCPToolProvider) -> None:
-        self._agentic_hotel_provider = provider
-
     def get(self, capability: str) -> MCPToolProvider:
         if capability == "geo":
             return self._selected_geo_provider()
-        if capability == "hotel":
-            return self._agentic_hotel_provider or self._selected_geo_provider()
         if capability == "weather":
-            return self._providers["geo:amap"]
+            provider = self._selected_geo_provider()
+            if getattr(provider, "provider_name", "") == "tencent":
+                return self._providers["geo:amap"]
+            return provider
 
         provider = self._providers.get(capability)
         if not provider:
@@ -38,17 +35,20 @@ class MCPToolRegistry:
 
     def _selected_geo_provider(self) -> MCPToolProvider:
         provider_name = get_map_provider()
+        if provider_name == "amap_mcp_sse":
+            if "geo:amap_mcp_sse" not in self._providers:
+                if not AMapSSEMCPProvider.is_enabled():
+                    raise RuntimeError("已选择高德 MCP SSE，但 AMAP_MCP_SSE_URL 未配置")
+                self._providers["geo:amap_mcp_sse"] = AMapSSEMCPProvider()
+            return self._providers["geo:amap_mcp_sse"]
         if provider_name == "tencent":
-            return self._providers["geo:tencent"]
+            return self._providers.get("geo:tencent", self._providers["geo:amap"])
         return self._providers["geo:amap"]
 
 
 _registry = MCPToolRegistry()
-_geo_provider = AMapMCPProvider()
-_registry.register("geo:amap", _geo_provider)
+_registry.register("geo:amap", AMapMCPProvider())
 _registry.register("geo:tencent", TencentMapMCPProvider())
-if AgenticHotelMCPProvider.is_enabled():
-    _registry.register_agentic_hotel(AgenticHotelMCPProvider())
 
 
 def get_mcp_registry() -> MCPToolRegistry:

@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict
 
-from app.services.mcp_client import MCPServerConfig, call_mcp_tool
+from app.mcp_tools.client import MCPServerConfig, call_mcp_tool
 
 
 class MCPToolProvider(ABC):

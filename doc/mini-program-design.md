@@ -25,7 +25,6 @@
 
 ```text
 ai-travel-planner/
-├── frontend/                # 现有 Web 前端，保持不变
 ├── miniapp/                 # 新增小程序端
 │   ├── src/
 │   │   ├── pages/
@@ -106,21 +105,24 @@ ai-travel-planner/
 
 | step | 展示文案 |
 | --- | --- |
-| `planner_agent` | 拆解旅行需求 |
-| `attraction_agent` | 搜索景点 |
-| `food_agent` | 安排餐饮 |
-| `hotel_agent` | 推荐住宿 |
-| `transport_agent` | 评估动线 |
-| `synthesizer_agent` | 生成每日行程 |
-| `poi_agent` | 补全地点信息 |
-| `reviewer_agent` | 审查行程质量 |
-| `weather_tool` | 获取天气 |
-| `budget` | 计算预算 |
+| `request_analysis` | 拆解旅行需求 |
+| `weather_lookup` | 获取天气 |
+| `attraction_search` | 搜索景点 |
+| `food_search` | 安排餐饮 |
+| `hotel_search` | 推荐住宿 |
+| `candidate_scoring` | 评分排序 |
+| `transport_planning` | 评估动线 |
+| `itinerary_synthesis` | 生成每日行程 |
+| `route_grounding` | 校准真实地点 |
+| `poi_enrichment` | 补全地点信息 |
+| `itinerary_review` | 审查行程质量 |
+| `budget_estimation` | 计算预算 |
+| `risk_notices` | 生成提醒 |
 | `summary` | 整理结果 |
 
 注意：
 
-微信小程序环境下流式响应需要单独处理，第一版可以优先调用非流式 `/api/trip/plan`，前端用本地模拟进度展示；如果要真实进度，再接入 `/api/trip/plan/stream` 的小程序分块读取能力。
+微信小程序环境下流式响应需要单独处理。当前优先调用 `/api/trip/planning/stream`，使用小程序分块读取能力展示真实进度；如果基础库不支持分块响应，再降级到 `/api/trip/planning/jobs`。
 
 ### 4.3 行程详情页
 
@@ -218,18 +220,15 @@ ai-travel-planner/
 | 登录 | `POST` | `/api/auth/login` | 返回 token |
 | 获取当前用户 | `GET` | `/api/auth/me` | 进入小程序时恢复登录 |
 | 修改用户 | `PUT` | `/api/users/me` | 更新昵称头像 |
-| 生成行程 | `POST` | `/api/trip/plan` | 第一版推荐使用 |
-| 流式生成 | `POST` | `/api/trip/plan/stream` | 真实进度版使用 |
-| 保存行程 | `POST` | `/api/trip/plans` | 与 Web 保持一致 |
+| 流式生成 | `POST` | `/api/trip/planning/stream` | 当前推荐使用 |
+| 异步生成 | `POST` | `/api/trip/planning/jobs` | SSE 不可用时降级 |
+| 任务状态 | `GET` | `/api/trip/planning/jobs/{job_id}` | 查询进度和结果 |
+| 保存行程 | `POST` | `/api/trip/plans` | 登录后保存 |
 | 历史行程 | `GET` | `/api/trip/plans` | 登录后使用 |
 | 行程详情 | `GET` | `/api/trip/plans/{id}` | 打开历史行程 |
 | 更新行程 | `PUT` | `/api/trip/plans/{id}` | 后续编辑能力 |
 | 删除行程 | `DELETE` | `/api/trip/plans/{id}` | 历史页使用 |
-| 天气 | `GET` | `/api/trip/weather` | 缺失天气时补查 |
-| POI 搜索 | `GET` | `/api/trip/pois/search` | 后续地点搜索 |
-| 推荐 | `GET` | `/api/trip/recommendations` | 后续补推荐 |
-| 预算估算 | `POST` | `/api/trip/budget/estimate` | 后续编辑后重算 |
-| 路线优化 | `POST` | `/api/trip/route/optimize` | 后续地图路线 |
+| 地图路线 | `POST` | `/api/trip/route/map` | 路线大图真实道路 polyline |
 | 路线计算 | `POST` | `/api/trip/route/calculate` | 后续地点导航 |
 
 ## 6. 请求封装
@@ -347,9 +346,9 @@ P2：
 
 ### 第二步：迁移接口契约
 
-1. 从 `frontend/src/types/trip.ts` 复制核心类型。
-2. 从 `frontend/src/services/api.ts` 复制接口列表，但改成 `uni.request`。
-3. 从 `frontend/src/stores/tripStore.ts` 拆出数据转换函数。
+1. 小程序端在 `miniapp/src/types/trip.ts` 维护当前接口契约。
+2. 小程序端使用 `miniapp/src/services/tripApi.ts` 封装 `uni.request`、SSE 和异步任务降级。
+3. 行程转换逻辑维护在 `miniapp/src/utils/tripTransform.ts`。
 
 ### 第三步：完成 P0 页面
 
@@ -389,10 +388,10 @@ P2：
 
 当前最合适的方案是：
 
-1. 保留 `frontend/` 的 Web 前端。
-2. 新增 `miniapp/` 作为独立小程序端。
-3. 小程序端重新设计手机展示形式。
-4. 后端 API 不改，第一版直接复用现有接口。
-5. 后续再把跨端类型和转换函数沉淀到 `shared/`。
+1. 删除旧 `frontend/` Web 展示端。
+2. 保留 `miniapp/` 作为主要用户端。
+3. 保留 `admin/` 作为运行时配置与管理端。
+4. 后端 API 以 `/api/trip/planning/stream`、`/api/trip/planning/jobs` 和 `/api/trip/plans` 为主。
+5. 后续如需跨端复用，再抽取共享类型和转换函数。
 
-这样可以最大限度保住当前 Web 成果，同时给手机用户一个真正适合小屏使用的入口。
+这样可以减少重复前端维护成本，把产品体验集中到真正面向用户的小程序端。

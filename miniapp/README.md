@@ -1,6 +1,6 @@
 # AI Travel Planner Miniapp
 
-这是 AI Travel Planner 的小程序展示层。现有 `frontend/` Web 端保持不变，小程序端独立维护页面、请求封装和移动端状态。
+这是 AI Travel Planner 的微信小程序展示层。旧 Web 展示端已删除，当前用户端以小程序为主，管理配置使用 `admin/`。
 
 ## 技术栈
 
@@ -59,13 +59,17 @@ npm --prefix miniapp run type-check
 
 小程序端复用现有后端接口：
 
-- `POST /api/trip/plan`
+- `POST /api/trip/planning/stream`
+- `POST /api/trip/planning/jobs`
+- `GET /api/trip/planning/jobs/{job_id}`
 - `POST /api/trip/plans`
 - `GET /api/trip/plans`
 - `GET /api/trip/plans/{id}`
+- `PUT /api/trip/plans/{id}`
 - `DELETE /api/trip/plans/{id}`
+- `POST /api/trip/route/map`
 - `POST /api/auth/login`
 - `POST /api/auth/register`
 - `GET /api/auth/me`
 
-第一版生成页使用非流式 `/api/trip/plan`，同时在前端展示本地步骤进度。后续如果需要真实进度，再接入 `/api/trip/plan/stream`。
+生成页优先使用 `/api/trip/planning/stream` 获取真实进度；如果微信基础库不支持分块响应，会降级到异步任务接口。余额不足、密钥无效、未配置模型等不可重试错误会直接终止生成，不再反复重试。

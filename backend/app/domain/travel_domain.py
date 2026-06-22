@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict, List
 
 from app.mcp_tools import get_mcp_registry
+from app.services.cache import get_cache, set_cache, cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,7 @@ class TravelDomainService:
     """
     Unified domain layer.
 
-    Agent and API layers depend on this service instead of relying on
+    Workflow and API layers depend on this service instead of relying on
     third-party payloads directly.
     """
 
@@ -20,57 +21,46 @@ class TravelDomainService:
         self.registry = get_mcp_registry()
 
     def search_pois(self, keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
+        ck = cache_key(city, keyword, str(page), str(size))
+        cached = get_cache(ck)
+        if cached is not None:
+            logger.debug("POI cache hit city=%s keyword=%s", city, keyword)
+            return cached
         raw_items = self.registry.get("geo").call_tool(
             "geocode_pois",
             {"keyword": keyword, "city": city, "page": page, "size": size},
         )
-        return [self._normalize_poi(item, city) for item in raw_items or []]
-
-    def search_hotels(self, keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
-        args = {"keyword": keyword, "city": city, "page": page, "size": size}
-        hotel_provider = self.registry.get("hotel")
-        geo_provider = self.registry.get("geo")
-
-        raw_items: List[Dict[str, Any]] = []
-        try:
-            raw_items = hotel_provider.call_tool("search_hotels", args) or []
-        except Exception as exc:
-            provider_name = getattr(hotel_provider, "provider_name", "hotel")
-            logger.warning(
-                "Hotel provider failed provider=%s city=%s keyword=%s error=%s",
-                provider_name,
-                city,
-                keyword,
-                exc,
-            )
-
-        if raw_items:
-            return [self._normalize_hotel(item, city) for item in raw_items]
-
-        if hotel_provider is geo_provider:
-            return []
-
-        logger.info(
-            "Hotel provider returned no usable results, fallback to geo provider city=%s keyword=%s",
-            city,
-            keyword,
-        )
-        fallback_items = geo_provider.call_tool("search_hotels", args) or []
-        return [self._normalize_hotel(item, city) for item in fallback_items]
+        result = [self._normalize_poi(item, city) for item in raw_items or []]
+        set_cache(ck, result)
+        return result
 
     def get_weather(self, city: str, days: int = 3) -> Dict[str, Any]:
+        ck = cache_key(city, "weather", str(days))
+        cached = get_cache(ck)
+        if cached is not None:
+            logger.debug("Weather cache hit city=%s days=%s", city, days)
+            return cached
         raw = self.registry.get("weather").call_tool(
             "get_weather_forecast",
             {"city": city, "days": days},
         )
-        return self._normalize_weather(raw or {}, city)
+        result = self._normalize_weather(raw or {}, city)
+        set_cache(ck, result)
+        return result
 
     def calculate_route(self, origin: str, destination: str, mode: str = "driving") -> Dict[str, Any]:
+        ck = cache_key("route", origin, destination, mode)
+        cached = get_cache(ck)
+        if cached is not None:
+            logger.debug("Route cache hit origin=%s destination=%s mode=%s", origin, destination, mode)
+            return cached
         raw = self.registry.get("geo").call_tool(
             "plan_route",
             {"origin": origin, "destination": destination, "mode": mode},
         )
-        return self._normalize_route(raw or {})
+        result = self._normalize_route(raw or {})
+        set_cache(ck, result)
+        return result
 
     def _normalize_poi(self, item: Dict[str, Any], city: str) -> Dict[str, Any]:
         return {
@@ -82,6 +72,11 @@ class TravelDomainService:
             "type": item.get("type", ""),
             "rating": float(item.get("rating", 0) or 0),
             "price": item.get("price", ""),
+            "avg_cost": int(float(item.get("avg_cost", 0) or 0)),
+            "price_source": item.get("price_source", ""),
+            "price_confidence": item.get("price_confidence", ""),
+            "price_unit": item.get("price_unit", ""),
+            "price_note": item.get("price_note", ""),
             "description": item.get("description", ""),
             "opening_hours": item.get("opening_hours", ""),
             "best_time": item.get("best_time", ""),
@@ -89,13 +84,6 @@ class TravelDomainService:
             "image_url": item.get("image_url"),
             "source": item.get("source", "geo"),
         }
-
-    def _normalize_hotel(self, item: Dict[str, Any], city: str) -> Dict[str, Any]:
-        poi = self._normalize_poi(item, city)
-        poi["type"] = "酒店"
-        poi["opening_hours"] = item.get("opening_hours", "")
-        poi["source"] = item.get("source", "hotel")
-        return poi
 
     def _normalize_weather(self, item: Dict[str, Any], city: str) -> Dict[str, Any]:
         forecast_items = []

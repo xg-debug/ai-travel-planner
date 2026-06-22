@@ -37,7 +37,7 @@ AI Travel Planner 的目标不是只做“推荐若干地点”，而是构建�
 其核心能力包括：
 
 1. 理解用户意图并拆分规划任务。
-2. 通过多 Agent 完成景点、餐饮、酒店、动线等子任务执行。
+2. 通过固定流水线完成景点、餐饮、酒店、动线等子任务执行。
 3. 汇总成多日 itinerary，并进行质量审查。
 4. 在前端以详情页、地图页、历史记录等形式完成交付。
 
@@ -58,8 +58,8 @@ AI Travel Planner 的目标不是只做“推荐若干地点”，而是构建�
 
 #### 技术目标
 
-1. 从固定流水线升级为任务驱动的 Agent 编排架构。
-2. 支持 Planner、ReAct Worker、Synthesizer、Reviewer 的分层协作。
+1. 使用 LangGraph `TripPlanningWorkflow` 表达 Plan-Execute-Replan 闭环，避免自治编排造成不可控耗时。
+2. 支持 Planner、Executor、Replanner、Finalizer 的清晰分层协作。
 3. 在 LLM 不稳定或外部服务异常时保持可回退能力。
 4. 支持前后端独立部署，并具备可扩展性与可观测性。
 
@@ -104,7 +104,7 @@ AI Travel Planner 的目标不是只做“推荐若干地点”，而是构建�
 | R-06 | 支持地图路线可视化 | P0 | 强化可执行理解 |
 | R-07 | 支持账号注册、登录、找回密码 | P1 | 账户体系 |
 | R-08 | 支持保存和管理历史行程 | P1 | 资产沉淀 |
-| R-09 | 支持结果审查与质量控制 | P1 | 多 Agent 必要机制 |
+| R-09 | 支持结果审查与质量控制 | P1 | 规划质量保障 |
 | R-10 | 支持更稳定的图片来源策略 | P2 | 体验优化 |
 | R-11 | 支持并行调度与结果 patch | P2 | 架构升级方向 |
 
@@ -136,8 +136,8 @@ flowchart TD
     A["用户进入规划页"] --> B["输入城市、天数、预算、偏好、自然语言需求"]
     B --> C["提交规划请求"]
     C --> D["前端建立 SSE 连接并显示步骤进度"]
-    D --> E["后端 Planner 生成任务计划"]
-    E --> F["多 Agent 执行子任务"]
+    D --> E["TripPlanningWorkflow 生成工具计划"]
+    E --> F["固定步骤执行候选搜索、评分和交通规划"]
     F --> G["Synthesizer 生成多日 itinerary"]
     G --> H["Reviewer 审查结果"]
     H --> I["补全天气、预算、POI 图片与坐标"]
@@ -156,31 +156,30 @@ sequenceDiagram
     participant U as User
     participant FE as Frontend
     participant API as Trip API
-    participant PL as Planner Agent
-    participant RT as Task Router
-    participant WK as Worker Agents
+    participant PL as TripPlanningWorkflow
+    participant EX as Executor
+    participant WK as Worker Steps
     participant SY as Synthesizer
     participant RV as Reviewer
     participant EXT as AMap/Weather/Media
     participant DB as MySQL
 
     U->>FE: 输入旅行需求并提交
-    FE->>API: POST /api/trip/plan/stream
-    API->>PL: 构建 TripState 并启动规划
-    PL-->>API: execution_plan + tasks
-    API-->>FE: SSE step=planner_agent
-    API->>RT: 路由下一个可执行任务
-    loop 按任务 DAG 执行
-        RT->>WK: 调用 attraction/food/hotel/transport/poi
+    FE->>API: POST /api/trip/planning/jobs
+    API->>PL: 构建 TripPlanningState 并启动规划
+    PL-->>API: status=request_analysis
+    API-->>FE: 轮询 /api/trip/planning/jobs/{job_id}
+    PL->>EX: 按固定步骤执行
+    loop 固定流水线步骤
+        EX->>WK: 并行/串行调用景点、餐饮、酒店、交通、POI 步骤
         WK->>EXT: 调用地图/媒体/天气等工具
         EXT-->>WK: 返回结果
-        WK-->>RT: 写回 task_results
-        RT-->>API: 下一步节点
-        API-->>FE: SSE step update
+        WK-->>EX: 写回 TripPlanningState
+        EX-->>PL: 返回步骤结果
     end
-    RT->>SY: 调用 synthesizer_agent
-    SY-->>RT: draft_plan
-    RT->>RV: 调用 reviewer_agent
+    PL->>SY: 合成每日行程
+    SY-->>PL: draft_plan
+    PL->>RV: 审查与修正
     RV-->>API: reviewed_plan + issues
     API->>EXT: 天气、预算后处理
     API-->>FE: 返回最终 itinerary/预算/天气
@@ -195,7 +194,7 @@ sequenceDiagram
 ### 5.1 架构原则
 
 1. 先规划再执行，避免单次大模型直接生成全量结果。
-2. 多 Agent 分工协作，降低单 Agent 提示词和职责复杂度。
+2. 固定步骤分工协作，降低单次大模型提示词和职责复杂度。
 3. 统一状态容器，避免中间结果丢失和模块间隐式耦合。
 4. 工具访问收口到 registry，便于扩展和替换供应商。
 5. 对外部依赖保持 fallback 设计，确保系统可用性。
@@ -218,13 +217,13 @@ flowchart TB
         B3["/api/users"]
     end
 
-    subgraph Orchestration["Agent 编排层"]
-        C1["Planner Agent"]
-        C2["Task Router / Coordinator"]
-        C3["Worker Agents<br/>Attraction / Food / Hotel / Transport / POI"]
-        C4["Synthesizer Agent"]
-        C5["Reviewer Agent"]
-        C6["Budget / Summary / Weather Nodes"]
+    subgraph Pipeline["TripPlanningWorkflow 工作流"]
+        C1["Planner<br/>搜索策略"]
+        C2["Executor<br/>步骤执行"]
+        C3["Workers<br/>Attraction / Food / Hotel / Transport / POI"]
+        C4["Synthesizer<br/>行程合成"]
+        C5["Reviewer<br/>审查与修正"]
+        C6["Budget / Summary / Weather Steps"]
     end
 
     subgraph Tooling["工具与服务层"]
@@ -275,7 +274,7 @@ flowchart TB
 | 层级 | 技术 |
 | --- | --- |
 | 前端 | Vue 3、Vite、Pinia、Tailwind、Axios/EventSource |
-| 后端 | FastAPI、LangGraph、Pydantic、SQLAlchemy |
+| 后端 | FastAPI、LangGraph TripPlanningWorkflow、Pydantic、SQLAlchemy |
 | 数据库 | MySQL 8.0 |
 | 地图服务 | 高德地图 JS API + Web Service API |
 | 图片服务 | POI 图片 + Unsplash + 前端 SVG fallback |
@@ -285,120 +284,109 @@ flowchart TB
 
 #### 优势
 
-1. 已从固定串行提示词升级为任务驱动的 Agent 工作流。
+1. 已从“多智能体自主编排”收敛为 LangGraph TripPlanningWorkflow，执行路径更清晰。
 2. 关键领域能力已拆分，便于逐步增强。
-3. 流式接口和状态驱动前端已经与后端编排保持一致。
+3. 轮询进度和状态驱动前端已经与后端流水线保持一致。
 4. 具备基础的用户系统和行程持久化能力，产品闭环完整。
 
 #### 当前限制
 
-1. 任务调度仍是 DAG 驱动的串行执行，尚未实现真实并行。
-2. Reviewer 以检查为主，尚未实现自动 patch 闭环。
+1. 外部 POI/酒店/图片数据仍受供应商稳定性影响。
+2. Reviewer 已具备 patch 能力，但复杂路线仍需要持续增强真实地理约束。
 3. 行程存储已统一为单一主表设计，降低了读写分叉和数据治理成本。
 4. 图片、价格、开放时间等外部信息源仍不够稳定。
 5. 预算与路线能力虽然已优化，但仍偏“规划辅助”而非“精确执行”。
 
 ---
 
-## 6. Agent 架构设计
+## 6. 规划流水线架构设计
 
 ### 6.1 设计模式
 
 当前采用的核心模式为：
 
-**Planner + Task Router + ReAct Workers + Synthesizer + Reviewer**
+**TripPlanningWorkflow + Planner + Executor + Replanner + Finalizer**
 
-这不是传统单 Agent ReAct，也不是完全自治的并行多 Agent，而是更适合当前工程阶段的受控多 Agent 架构。
+它不是自治多模型角色编排，也不是 DAG，而是一条固定、可观测、可调优的旅行规划流水线。LLM 参与查询策略、交通规划和最终整合，但步骤顺序由代码显式控制。
 
-### 6.2 Agent 编排图
+### 6.2 流水线编排图
 
 ```mermaid
 flowchart LR
-    A["planner_agent"] --> B["task_router"]
-    B --> C["attraction_agent"]
-    B --> D["food_agent"]
-    B --> E["hotel_agent"]
-    B --> F["transport_agent"]
-    B --> G["synthesizer_agent"]
-    B --> H["poi_agent"]
-    B --> I["reviewer_agent"]
-    I --> J["weather_tool"]
-    J --> K["budget"]
-    K --> L["summary"]
-
-    C --> B
-    D --> B
-    E --> B
-    F --> B
-    G --> B
-    H --> B
-    I --> B
+    A["request_analysis"] --> B["weather_lookup + candidate searches"]
+    B --> C["candidate_scoring"]
+    C --> D["transport_planning"]
+    D --> E["itinerary_synthesis"]
+    E --> F["route_grounding"]
+    F --> G["poi_enrichment"]
+    G --> H["itinerary_review"]
+    H --> I["budget_estimation"]
+    I --> J["risk_notices"]
+    J --> K["summary"]
 ```
 
-### 6.3 Agent 职责定义
+### 6.3 步骤职责定义
 
-| Agent | 职责 | 输入 | 输出 |
+| 步骤 | 职责 | 输入 | 输出 |
 | --- | --- | --- | --- |
-| planner_agent | 理解用户需求，产出 `query_plan`、`execution_plan`、`tasks` | 用户输入、历史偏好 | query_plan、tasks |
-| attraction_agent | 搜索景点/街区/人文地标候选 | 城市、偏好、query_plan | attraction_candidates |
-| food_agent | 搜索本地餐饮候选并做连锁/重复过滤 | 城市、预算、风格 | food_candidates |
-| hotel_agent | 搜索预算和区域匹配的住宿候选 | 城市、预算、人数 | hotel_options |
-| transport_agent | 生成基础动线和路线摘要 | 候选点、酒店、城市 | transport_plan |
-| synthesizer_agent | 汇总候选，生成多日草案 | attractions、food、hotel、transport | draft_plan |
-| poi_agent | 补全坐标、图片、地址、描述等 | draft_plan | poi_data、enriched itinerary |
-| reviewer_agent | 检查重复、缺失、节奏和完整性 | enriched itinerary | reviewed_plan、review_issues |
+| plan_search_strategy | 理解用户需求，产出查询策略 | 用户输入、偏好、预算 | query_plan |
+| search_attractions | 搜索景点/街区/人文地标候选 | 城市、偏好、query_plan | attraction_candidates |
+| search_foods | 搜索本地餐饮候选并做过滤 | 城市、预算、风格 | food_candidates |
+| search_hotels | 搜索预算和区域匹配的住宿候选 | 城市、预算、人数、住宿档位 | hotel_options |
+| evaluate_transport | 生成往返交通和基础动线摘要 | 候选点、酒店、城市 | transport_plan |
+| synthesize_itinerary | 汇总候选，生成多日草案 | attractions、food、hotel、transport | draft_plan |
+| enrich_poi | 补全坐标、图片、地址、描述等 | draft_plan | poi_data、enriched itinerary |
+| review_itinerary | 检查重复、缺失、节奏和完整性 | enriched itinerary | reviewed_plan、review_issues |
 
-### 6.4 Worker ReAct 模式
+### 6.4 Worker 执行约束
 
-Attraction、Food、Hotel 当前采用受控 ReAct Worker 模式。
+Attraction、Food、Hotel 当前是受控搜索步骤，不承担自主任务路由。
 
 ```mermaid
 flowchart TD
-    A["任务输入"] --> B["Reason: 判断还缺什么信息"]
-    B --> C["Act: 选择白名单工具"]
-    C --> D["Observe: 获取搜索/工具结果"]
-    D --> E{"是否足够完成任务"}
-    E -- "否" --> B
-    E -- "是" --> F["Finalize: 结构化输出结果"]
-    D --> G["Fallback: LLM失败时使用确定性策略"]
-    G --> F
+    A["步骤输入"] --> B["构造查询词"]
+    B --> C["调用地图/酒店 Provider"]
+    C --> D["清洗、去重、过滤低质结果"]
+    D --> E["统一评分"]
+    E --> F["写回 TripPlanningState"]
 ```
 
 约束规则：
 
-1. 有最大步数限制。
-2. 工具调用在白名单内。
+1. 每个步骤的输入输出字段固定。
+2. 工具调用在 provider 适配层内完成。
 3. 结果输出必须结构化。
-4. LLM 失败时自动降级到确定性策略。
+4. 外部服务失败时保留友好错误和可用的结构化恢复路径。
 
-### 6.5 Task 模型设计
+### 6.5 状态模型设计
 
-当前任务模型在编排层中承担核心作用，典型字段如下：
+当前规划状态由 `TripPlanningState` 承载，典型字段如下：
 
 | 字段 | 说明 |
 | --- | --- |
-| task_id | 任务唯一标识 |
-| step | 前端流式步骤名 |
-| agent | 执行该任务的 agent 名 |
-| title | 任务标题 |
-| goal | 任务目标 |
-| depends_on | 依赖的前置任务 |
-| status | `pending/running/completed/failed` |
-| inputs | 当前任务输入 |
-| result | 当前任务结果 |
-| error | 错误信息 |
+| query | 归一化后的旅行需求 |
+| city | 目的地城市 |
+| preferences | 用户偏好 |
+| accommodation_preference | 住宿档位 |
+| query_plan | 搜索策略 |
+| attraction_candidates / food_candidates / hotel_options | 真实候选数据 |
+| scored_attractions / scored_foods / scored_hotels | 评分后候选 |
+| transport_plan | 交通和动线结果 |
+| plan / reviewed_plan | 结构化行程 |
+| review_issues | 审查问题 |
+| estimated_budget / risk_notices | 预算和风险提醒 |
 
-### 6.6 当前 Agent 设计问题与优化建议
+### 6.6 当前流水线优化方向
 
 #### 问题 1：串行执行导致生成耗时增长
 
-现状：当前虽然是多 Agent，但执行顺序仍是串行。
+现状：已将天气、候选搜索等无强依赖步骤并行化，耗时主要来自外部供应商和 LLM 最终整合。
 
 建议：
 
-1. 将 attraction、food、hotel 设计为可并行执行的第一批任务。
-2. 将 transport 放在第二批依赖任务。
-3. 将 reviewer 后置保留，但支持 patch 模式。
+1. 继续控制每类候选数量和 provider 超时。
+2. 默认优先结构化快速合成，LLM 负责必要的整合和交通方案。
+3. 增加任务耗时埋点，定位慢 provider。
 
 #### 问题 2：Synthesizer 与 Reviewer 的边界还可以更清晰
 
@@ -428,40 +416,47 @@ flowchart TD
 
 ```text
 backend/app/
-  agents/
-    planner/
-    workers/
-    synthesizer/
-    reviewer/
   api/
-  orchestration/
-  tools/
+    trip_planning.py
+    trip_plans.py
+    map_routes.py
+  trip_planning/
+    workflow.py
+    nodes.py
+    state.py
+    tool_executor.py
+    jobs.py
+    errors.py
+  mcp_tools/
   services/
-  graph/
   models/
   core/
 
-frontend/src/
-  views/
+miniapp/src/
+  pages/
   components/
   stores/
   services/
-  router/
+  utils/
+
+admin/src/
+  views/
+  services/
 ```
 
 ### 7.2 后端模块职责
 
 | 模块 | 说明 |
 | --- | --- |
-| `app/api` | 提供 trip、auth、users 接口 |
-| `app/agents/planner` | Planner 提示词与规划输出 |
-| `app/agents/workers` | 各领域 worker 与 ReAct 基类 |
-| `app/agents/synthesizer` | 多候选结果合成 itinerary |
-| `app/agents/reviewer` | 审核与修复建议 |
-| `app/orchestration` | task model、task router、coordinator |
-| `app/tools` | 面向 Agent 的工具注册与适配 |
-| `app/services` | 底层业务服务，如高德、预算、图片 |
-| `app/graph` | LangGraph 节点编排、State 定义 |
+| `app/api` | 提供规划、行程、辅助查询、地图、auth、users 接口 |
+| `app/trip_planning/workflow.py` | LangGraph 规划工作流入口 |
+| `app/trip_planning/nodes.py` | Planner / Executor / Replanner / Finalizer 节点 |
+| `app/trip_planning/tool_executor.py` | 天气、POI、住宿、交通工具执行 |
+| `app/trip_planning/state.py` | 请求归一化、进度步骤、状态合并 |
+| `app/trip_planning/jobs.py` | 异步任务状态与结果缓存 |
+| `app/trip_planning/errors.py` | LLM/规划错误分类和前端兜底语义 |
+| `app/mcp_tools` | 高德 MCP SSE、地图 Provider 与工具注册 |
+| `app/services` | 底层业务服务，如高德、腾讯地图、路线、缓存、运行时配置 |
 | `app/models` | ORM 数据模型 |
 | `app/core` | 配置、数据库、安全、LLM 等基础设施 |
 
@@ -505,25 +500,28 @@ frontend/src/
 2. 旅行需求不能为空。
 3. 天数必须大于 0 且小于系统最大限制。
 
-### 8.2 流式规划模块
+### 8.2 规划进度模块
 
 #### 功能目标
 
 让用户感知系统正在做什么，降低等待焦虑。
 
-#### 当前流式步骤
+#### 当前进度步骤
 
-1. `planner_agent`
-2. `attraction_agent`
-3. `food_agent`
-4. `hotel_agent`
-5. `transport_agent`
-6. `synthesizer_agent`
-7. `poi_agent`
-8. `reviewer_agent`
-9. `weather_tool`
-10. `budget`
-11. `summary`
+1. `request_analysis`
+2. `weather_lookup`
+3. `attraction_search`
+4. `food_search`
+5. `hotel_search`
+6. `candidate_scoring`
+7. `transport_planning`
+8. `itinerary_synthesis`
+9. `route_grounding`
+10. `poi_enrichment`
+11. `itinerary_review`
+12. `budget_estimation`
+13. `risk_notices`
+14. `summary`
 
 #### 前端体验要求
 
@@ -636,18 +634,16 @@ frontend/src/
 
 | 分类 | 方法 | 路径 | 说明 |
 | --- | --- | --- | --- |
-| 行程规划 | POST | `/api/trip/plan` | 同步生成结果 |
-| 行程规划 | POST | `/api/trip/plan/stream` | SSE 流式生成 |
+| 行程规划 | POST | `/api/trip/planning` | 同步生成结果 |
+| 行程规划 | POST | `/api/trip/planning/stream` | SSE 流式生成 |
+| 行程规划 | POST | `/api/trip/planning/jobs` | 启动异步规划任务 |
+| 行程规划 | GET | `/api/trip/planning/jobs/{job_id}` | 查询异步任务状态 |
 | 行程管理 | GET | `/api/trip/plans` | 查询行程列表 |
 | 行程管理 | GET | `/api/trip/plans/{plan_id}` | 查询单个行程 |
 | 行程管理 | POST | `/api/trip/plans` | 新建/覆盖保存行程 |
 | 行程管理 | PUT | `/api/trip/plans/{plan_id}` | 更新行程 |
 | 行程管理 | DELETE | `/api/trip/plans/{plan_id}` | 删除行程 |
-| 天气 | GET | `/api/trip/weather` | 获取天气 |
-| POI | GET | `/api/trip/pois/search` | 搜索地点 |
-| 推荐 | GET | `/api/trip/recommendations` | 获取推荐内容 |
-| 预算 | POST | `/api/trip/budget/estimate` | 预算估算 |
-| 路线 | POST | `/api/trip/route/optimize` | 路线优化 |
+| 路线 | POST | `/api/trip/route/map` | 生成地图真实道路 polyline |
 | 路线 | POST | `/api/trip/route/calculate` | 路径计算 |
 | 健康检查 | GET | `/api/trip/health` | 服务健康状态 |
 | 认证 | POST | `/api/auth/register` | 注册 |
@@ -658,19 +654,24 @@ frontend/src/
 | 用户 | GET | `/api/users/me` | 获取用户资料 |
 | 用户 | PUT | `/api/users/me` | 更新用户资料 |
 
-### 9.2 `POST /api/trip/plan/stream` 设计说明
+### 9.2 `POST /api/trip/planning/stream` 设计说明
 
 #### 请求体
 
 ```json
 {
-  "query": "想去洛阳玩三天，偏人文和美食，预算中等",
-  "city": "洛阳",
+  "departureCity": "上海",
+  "destination": "洛阳",
+  "startDate": "2026-05-01",
+  "endDate": "2026-05-03",
+  "departureTime": "08:00",
+  "returnArrivalTime": "20:00",
   "days": 3,
-  "preferences": ["人文", "美食"],
-  "budget": "中等",
   "travelers": 2,
-  "start_date": "2026-05-01"
+  "interests": ["history", "food"],
+  "budgetAmount": 6000,
+  "accommodationPreference": "mid-range",
+  "additionalRequirements": "偏人文和美食，预算中等"
 }
 ```
 
@@ -690,18 +691,18 @@ frontend/src/
 
 ## 10. 状态设计
 
-### 10.1 TripState 结构图
+### 10.1 TripPlanningState 结构图
 
 ```mermaid
 flowchart TD
-    A["TripState"] --> B["输入层<br/>query/city/days/preferences/budget/travelers/start_date"]
-    A --> C["规划层<br/>query_plan/execution_plan/tasks/task_results/completed_tasks/current_task"]
+    A["TripPlanningState"] --> B["输入层<br/>query/city/days/preferences/budget/travelers/start_date"]
+    A --> C["规划层<br/>query_plan/progress/step_updates"]
     A --> D["候选层<br/>attraction_candidates/food_candidates/hotel_options/transport_plan"]
     A --> E["结果层<br/>draft_plan/reviewed_plan/plan/poi_data"]
     A --> F["后处理层<br/>weather_data/estimated_budget/recommendations/final_output"]
 ```
 
-### 10.2 TripState 关键字段
+### 10.2 TripPlanningState 关键字段
 
 | 字段 | 说明 |
 | --- | --- |
@@ -712,11 +713,10 @@ flowchart TD
 | `budget` | 预算等级 |
 | `travelers` | 出行人数 |
 | `query_plan` | Planner 生成的结构化查询计划 |
-| `execution_plan` | Planner 生成的全局执行计划 |
-| `tasks` | 当前任务列表 |
-| `task_results` | 各任务执行结果 |
-| `completed_tasks` | 已完成任务 |
-| `current_task` | 当前任务 |
+| `accommodation_preference` | 用户住宿档位 |
+| `scored_attractions` | 评分后的景点候选 |
+| `scored_foods` | 评分后的餐饮候选 |
+| `scored_hotels` | 评分后的酒店候选 |
 | `attraction_candidates` | 景点候选 |
 | `food_candidates` | 餐饮候选 |
 | `hotel_options` | 酒店候选 |
@@ -803,7 +803,7 @@ erDiagram
 
 ### 11.4 当前数据库设计问题
 
-#### 问题 1：缺少 Agent 任务日志表
+#### 问题 1：缺少规划步骤日志表
 
 建议新增：
 
@@ -839,7 +839,7 @@ erDiagram
 ### 12.4 可观测性要求
 
 1. 记录每个规划请求的 trace_id。
-2. 记录 Agent 步骤耗时和失败原因。
+2. 记录流水线步骤耗时和失败原因。
 3. 记录外部 API 错误分类。
 4. 记录前端关键失败路径，如地图初始化失败。
 
@@ -851,10 +851,10 @@ erDiagram
 
 | 层级 | 目标 |
 | --- | --- |
-| 单元测试 | 验证工具函数、预算逻辑、任务路由逻辑 |
-| Agent 测试 | 验证 planner/worker/synthesizer/reviewer 输出稳定性 |
+| 单元测试 | 验证工具函数、预算逻辑、状态转换逻辑 |
+| 流水线步骤测试 | 验证 planner/worker/synthesizer/reviewer 输出稳定性 |
 | 接口测试 | 验证 trip/auth/users 接口正确性 |
-| 集成测试 | 验证多 Agent 链路是否贯通 |
+| 集成测试 | 验证 TripPlanningWorkflow 链路是否贯通 |
 | 前端测试 | 验证页面交互、SSE 进度、地图异常提示 |
 | E2E 测试 | 验证从输入到查看结果再到保存的完整链路 |
 
@@ -931,12 +931,12 @@ flowchart TD
 AI Travel Planner 当前已经具备一个真实可运行项目的基础形态：
 
 1. 产品层面具备完整的规划、查看、保存、地图和账户闭环。
-2. 技术层面已从固定流水线升级为任务驱动的多 Agent 架构。
+2. 技术层面已收敛为可观测的 TripPlanningWorkflow 架构。
 3. 工程层面已有 API、数据库、前端状态、流式步骤和基础异常处理。
 
 但从“可运行”走向“可规模化迭代”，还需要解决三个核心问题：
 
-1. 将当前串行多 Agent 升级为更高效的并行任务编排。
+1. 继续优化当前流水线的并行步骤、超时控制和候选数量。
 2. 继续增强行程结构化字段和日志体系，提升查询与可观测能力。
 3. 强化 Reviewer、监控和测试体系，提升结果质量稳定性。
 

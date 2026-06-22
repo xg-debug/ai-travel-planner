@@ -132,7 +132,7 @@
     {
       "name": "trip_generation_tasks",
       "status": "future",
-      "reason": "Persist per-agent task execution, status, retries and timings."
+      "reason": "Persist per-pipeline-step execution, status, retries and timings."
     },
     {
       "name": "trip_generation_events",

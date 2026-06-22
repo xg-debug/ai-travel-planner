@@ -16,7 +16,7 @@ const getBaseUrl = () => {
   return value.replace(/\/$/, '')
 }
 
-const buildUrl = (path: string, params?: RequestOptions['params']) => {
+export const buildApiUrl = (path: string, params?: RequestOptions['params']) => {
   const url = `${getBaseUrl()}${path.startsWith('/') ? path : `/${path}`}`
   const cleanParams = Object.entries(params || {}).filter(([, value]) => value !== undefined && value !== null)
   if (!cleanParams.length) return url
@@ -27,9 +27,12 @@ const buildUrl = (path: string, params?: RequestOptions['params']) => {
 }
 
 const parseApiError = (data: unknown, statusCode?: number) => {
+  const detail = (data as any)?.detail
+  const structured = detail && typeof detail === 'object' ? detail : null
+  if (structured?.message) return String(structured.message)
   const raw = typeof data === 'string'
     ? data
-    : String((data as any)?.detail || (data as any)?.message || '')
+    : String(detail || (data as any)?.message || '')
   const lower = raw.toLowerCase()
   if (statusCode === 401) return '登录已过期，请重新登录'
   if (statusCode === 402 || lower.includes('insufficient balance') || raw.includes('余额不足')) {
@@ -50,7 +53,7 @@ export function request<T>(options: RequestOptions): Promise<T> {
   const token = getAuthToken()
   return new Promise((resolve, reject) => {
     uni.request({
-      url: buildUrl(options.url, options.params),
+      url: buildApiUrl(options.url, options.params),
       method: options.method || 'GET',
       data: options.data as any,
       timeout: options.timeout || 120000,

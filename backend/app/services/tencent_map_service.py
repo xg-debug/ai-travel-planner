@@ -71,22 +71,6 @@ class TencentMapService:
             logger.error("Error searching Tencent POIs: %s", exc)
             raise
 
-    def search_hotels(self, keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
-        queries = [keyword, f"{city}酒店", f"{city}宾馆"]
-        results: List[Dict[str, Any]] = []
-        seen: set[str] = set()
-        for query in queries:
-            for item in self.search_pois(query, city, page, size):
-                name = str(item.get("name") or "").strip()
-                if not name or name in seen:
-                    continue
-                item["type"] = "酒店"
-                seen.add(name)
-                results.append(item)
-                if len(results) >= size:
-                    return results
-        return results
-
     def plan_day_route(self, points: List[Dict[str, Any]], mode: str = "driving") -> Dict[str, Any]:
         if len(points) < 2:
             return {"distance": 0, "duration": 0, "polyline": [], "legs": []}
@@ -200,6 +184,9 @@ class TencentMapService:
             ]
 
         values = [float(value) for value in polyline]
+        if len(values) >= 2 and (abs(values[0]) > 1000 or abs(values[1]) > 1000):
+            values[0] = values[0] / 1000000
+            values[1] = values[1] / 1000000
         for index in range(2, len(values)):
             values[index] = values[index - 2] + values[index] / 1000000
 
@@ -217,10 +204,6 @@ tencent_map_service = TencentMapService()
 
 def search_pois(keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
     return tencent_map_service.search_pois(keyword, city, page, size)
-
-
-def search_hotels(keyword: str, city: str, page: int = 1, size: int = 10) -> List[Dict[str, Any]]:
-    return tencent_map_service.search_hotels(keyword, city, page, size)
 
 
 def calculate_route(origin: str, destination: str, mode: str = "driving") -> Dict[str, Any]:

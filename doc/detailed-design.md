@@ -8,8 +8,8 @@
 | 输入依据 | `doc/proposal.md` |
 | 输出文件 | `doc/detailed-design.md` |
 | 设计范围 | 微信小程序 + Python FastAPI 后端 |
-| 架构原则 | 基于当前代码演进，模块独立，职责清晰，可渐进改造 |
-| 更新时间 | 2026-05-15 |
+| 架构原则 | 固定流水线、模块独立、职责清晰、可观测、可渐进增强 |
+| 更新时间 | 2026-06-16 |
 
 ## 2. 设计目标
 
@@ -26,28 +26,28 @@
 7. 输出每日预算和总预算。
 8. 小程序本地支持编辑行程顺序和删除景点。
 9. 小程序本地支持导出图片和 PDF。
-10. 保持模块独立，降低 Agent、工具、评分、预算、天气、导出之间的耦合。
+10. 保持模块独立，降低流水线步骤、工具、评分、预算、天气、导出之间的耦合。
 
 ## 3. 总体架构决策
 
-### 3.1 是否继续使用多 Agent + LangGraph
+### 3.1 是否继续使用工作流式规划
 
-结论：**继续使用当前多 Agent + LangGraph 架构，但需要收紧职责边界。**
+结论：**正式收敛为 LangGraph `TripPlanningWorkflow` 的 Plan-Execute-Replan 工作流。**
 
 理由：
 
 1. 旅游规划天然是多步骤任务，涉及需求理解、候选搜索、候选评分、天气影响、路线组织、预算估算、结果审查，适合工作流编排。
-2. 当前代码已经具备 Planner、Attraction、Food、Hotel、Transport、Synthesizer、Reviewer 等节点，继续演进成本低。
-3. LangGraph 适合表达“先搜索候选，再综合生成，再审查修复”的有向流程。
-4. 多 Agent 架构合理，但不应让每个 Agent 都自行决定评分、预算、天气和数据格式，否则会产生重复逻辑和结果不稳定。
+2. 当前产品更需要稳定、低耗时、可解释的固定链路，而不是让多个模型角色自主路由。
+3. 旧 agent/orchestrator/graph 编排层已从源码删除，规划入口统一为 `backend/app/trip_planning/workflow.py`。
+4. LLM 仍参与 Planner、Replanner、Finalizer 和交通规划，但工具执行和状态流转由代码显式控制。
 
 需要调整的地方：
 
-1. Agent 负责“任务执行和文本推理”，通用规则下沉到独立服务。
-2. 评分排序由 `ScoringService` 统一负责。
-3. 天气影响由 `WeatherImpactService` 统一负责。
+1. Executor 负责工具调用和结果写回，候选清洗保留在 `candidates.py`。
+2. 推荐去重、展示字段归一化由 `recommendations.py` 负责。
+3. 天气影响、预算和风险提醒分别由独立模块负责。
 4. 预算估算由 `BudgetService` 统一负责。
-5. 质量审查由 `ItineraryReviewService` 或 Reviewer Agent 统一负责。
+5. 质量审查由 `trip_planning/reviewer` 统一负责。
 6. API 层只做输入校验、状态构造和响应转换，不承载规划逻辑。
 
 ### 3.2 编辑和导出边界
@@ -80,17 +80,18 @@ flowchart TB
     end
 
     subgraph API["FastAPI API 层"]
-        TripAPI["Trip API"]
-        PlanStream["规划/流式规划接口"]
-        PlanStorage["行程存储接口"]
+        TripPlanningAPI["trip_planning.py"]
+        PlanStorage["trip_plans.py"]
+        RouteAPI["map_routes.py"]
     end
 
-    subgraph Orchestration["规划编排层"]
-        Graph["LangGraph Workflow"]
-        Planner["Planner Agent"]
-        Workers["Worker Agents"]
-        Synthesizer["Synthesizer Agent"]
-        Reviewer["Reviewer Agent"]
+    subgraph Workflow["TripPlanningWorkflow"]
+        WorkflowEntry["workflow.py"]
+        Nodes["nodes.py"]
+        Executor["tool_executor.py"]
+        State["state.py / graph_state.py"]
+        Jobs["jobs.py"]
+        Errors["errors.py"]
     end
 
     subgraph Domain["领域服务层"]
@@ -112,22 +113,23 @@ flowchart TB
     end
 
     PlanPage --> TripStore
-    TripStore --> TripAPI
-    TripAPI --> Intent
-    TripAPI --> Graph
-    Graph --> Planner
-    Graph --> Workers
+    TripStore --> TripPlanningAPI
+    TripPlanningAPI --> Intent
+    TripPlanningAPI --> PipelineEntry
+    PipelineEntry --> Executor
+    Executor --> Planner
+    Executor --> Workers
     Workers --> Candidate
     Candidate --> AMap
     Candidate --> HotelProvider
-    Workers --> Scoring
-    Graph --> WeatherImpact
-    Graph --> Synthesizer
+    Executor --> Scoring
+    Executor --> WeatherImpact
+    PipelineEntry --> Synthesizer
     Synthesizer --> LLM
-    Graph --> Reviewer
-    Graph --> Budget
-    Graph --> Risk
-    Graph --> Normalize
+    PipelineEntry --> Reviewer
+    Executor --> Budget
+    Executor --> Risk
+    PipelineEntry --> Normalize
     TripAPI --> Transform
     Transform --> DetailPage
     DetailPage --> EditPage
@@ -141,14 +143,14 @@ flowchart TB
 | --- | --- | --- | --- |
 | TravelIntentService | 前后端均可有轻量实现 | 解析城市、识别模糊输入、校验城市必填 | 不生成行程 |
 | Trip API | 后端 | 输入校验、调用规划工作流、返回结构化结果 | 不直接写评分、天气、预算规则 |
-| Planner Agent | 后端 | 生成任务计划和查询意图 | 不直接调用所有工具 |
+| Planner | 后端 | 生成查询意图和搜索策略 | 不直接调用所有工具 |
 | CandidateSearchService | 后端 | 统一搜索景点、餐饮、酒店候选 | 不决定最终行程 |
 | ScoringService | 后端 | 候选评分、排序、解释特征输出 | 不调用 LLM 生成行程 |
 | WeatherImpactService | 后端 | 天气分类、天气适配分、调整建议 | 不负责预算 |
 | RouteAssessmentService | 后端 | 距离、顺路性、跨区折返评估 | 不负责 POI 搜索 |
 | BudgetService | 后端 | 每日预算、总预算、预算风险 | 不负责推荐排序的全部逻辑 |
-| Synthesizer Agent | 后端 | 根据候选、评分、天气、预算生成 itinerary | 不重新搜索候选 |
-| Reviewer Agent | 后端 | 审查重复、过密、绕路、预算异常、天气冲突 | 不承担主生成 |
+| Synthesizer | 后端 | 根据候选、评分、天气、预算生成 itinerary | 不重新搜索候选 |
+| Reviewer | 后端 | 审查重复、过密、绕路、预算异常、天气冲突 | 不承担主生成 |
 | RiskNoticeService | 后端 | 生成避坑提醒 | 不改变行程结构 |
 | TripNormalizeService | 后端 | 统一输出结构、补默认值 | 不做业务决策 |
 | Trip Store | 小程序 | 保存草稿、当前行程、本地编辑结果 | 不直接调用地图服务 |
@@ -159,59 +161,51 @@ flowchart TB
 
 ### 5.1 后端目录建议
 
-当前后端已有 `agents`、`graph`、`services`、`tools`、`domain` 等目录。建议在现有结构上渐进新增模块：
+当前后端已收敛为 `trip_planning`、`services`、`tools`、`domain` 等目录。规划主链路放在 `trip_planning` 包内：
 
 ```text
 backend/app/
   api/
-    trip.py
-  graph/
-    graph.py
-    state.py
+    trip_planning.py
+    trip_plans.py
+    map_routes.py
+  trip_planning/
+    workflow.py
     nodes.py
-  agents/
-    planner/
-    workers/
-    synthesizer/
-    reviewer/
+    state.py
+    tool_executor.py
+    jobs.py
+    errors.py
   services/
     travel_intent.py
-    candidate_service.py          # 新增
-    scoring_service.py            # 新增
-    weather_impact_service.py     # 新增
-    route_assessment_service.py   # 新增
-    risk_notice_service.py        # 新增
-    budget_service.py
     amap_service.py
+    map_route_service.py
     tencent_map_service.py
-    unsplash_service.py
-    trip_normalize_service.py     # 新增
+    runtime_config.py
+    cache.py
   domain/
     travel_domain.py
   tools/
 ```
 
-### 5.2 TripState 设计
+### 5.2 TripPlanningState 设计
 
-当前 `TripState` 已包含 query、city、days、preferences、budget、candidates、weather、plan 等字段。为了支撑评分排序、天气影响、避坑提醒和质量评估，建议扩展为以下逻辑结构。
+当前 `TripPlanningState` 已包含 query、city、days、preferences、budget、candidates、weather、plan 等字段，并支撑评分排序、天气影响、避坑提醒和质量评估。
 
 ```python
-class TripState(TypedDict, total=False):
+class TripPlanningState(TypedDict, total=False):
     query: str
     city: str
+    departure_city: str
     days: int
     travelers: int
     budget: str
     budget_amount: float
+    accommodation_preference: str
     start_date: str
     preferences: list[str]
 
     query_plan: dict
-    execution_plan: dict
-    tasks: list[dict]
-    task_results: dict
-    completed_tasks: list[str]
-
     weather_data: dict
     weather_impacts: list[dict]
 
@@ -223,7 +217,8 @@ class TripState(TypedDict, total=False):
     scored_foods: list[dict]
     scored_hotels: list[dict]
 
-    route_assessment: dict
+    transport_plan: dict
+    intercity_transport: dict
     draft_plan: list[dict]
     reviewed_plan: list[dict]
     plan: list[dict]
@@ -239,12 +234,12 @@ class TripState(TypedDict, total=False):
     final_output: str
 ```
 
-改造建议：
+当前约束：
 
-1. 当前 `budget` 是“经济/中等/豪华”等文本档位，无法直接表达用户输入的金额。建议请求体新增 `budget_amount`，保留 `budget` 作为预算档位。
-2. 当前 `estimated_budget` 只表达整体预算。建议新增 `daily_budgets`，用于小程序展示每日预算。
-3. 当前缺少 `weather_impacts` 和 `risk_notices`，建议作为独立输出，避免把天气建议塞进普通描述字段。
-4. 当前候选和已评分候选没有分开，建议保留原始候选和评分后候选，便于调试和质量评估。
+1. 请求体使用 camelCase，内部状态使用 snake_case。
+2. `budget_amount` 由请求体 `budgetAmount` 转换而来，`budget` 保留为预算档位。
+3. `daily_budgets`、`weather_impacts`、`risk_notices` 独立输出，避免塞进普通描述字段。
+4. 原始候选和评分后候选分开保存，便于调试和质量评估。
 
 ### 5.3 API 设计
 
@@ -253,21 +248,25 @@ class TripState(TypedDict, total=False):
 保留现有接口：
 
 ```http
-POST /api/trip/plan
+POST /api/trip/planning
 ```
 
-请求体建议演进为：
+请求体：
 
 ```json
 {
-  "query": "深圳海边玩，轻松一点",
-  "city": "深圳",
+  "departureCity": "广州",
+  "destination": "深圳",
+  "startDate": "2026-05-15",
+  "endDate": "2026-05-17",
+  "departureTime": "08:00",
+  "returnArrivalTime": "20:00",
   "days": 3,
-  "preferences": ["classic", "food", "nature"],
-  "budget": "中等",
-  "budget_amount": 7000,
   "travelers": 2,
-  "start_date": "2026-05-15"
+  "interests": ["classic", "food", "nature"],
+  "budgetAmount": 7000,
+  "accommodationPreference": "mid-range",
+  "additionalRequirements": "深圳海边玩，轻松一点"
 }
 ```
 
@@ -336,7 +335,7 @@ POST /api/trip/plan
 保留现有接口：
 
 ```http
-POST /api/trip/plan/stream
+POST /api/trip/planning/stream
 ```
 
 SSE 事件建议：
@@ -344,17 +343,19 @@ SSE 事件建议：
 | event | data.step | 说明 |
 | --- | --- | --- |
 | status | intent_validation | 校验城市、日期、预算 |
-| status | planner_agent | 拆解旅行需求 |
-| status | weather_tool | 获取天气并生成天气影响 |
-| status | attraction_agent | 搜索景点候选 |
-| status | food_agent | 搜索餐饮候选 |
-| status | hotel_agent | 搜索住宿候选 |
-| status | scoring | 候选评分排序 |
-| status | transport_agent | 评估路线顺路性 |
-| status | synthesizer_agent | 生成每日行程 |
-| status | reviewer_agent | 审查行程质量 |
-| status | budget | 计算每日和总预算 |
-| status | risk_notice | 生成避坑提醒 |
+| status | request_analysis | 拆解旅行需求 |
+| status | weather_lookup | 获取天气并生成天气影响 |
+| status | attraction_search | 搜索景点候选 |
+| status | food_search | 搜索餐饮候选 |
+| status | hotel_search | 搜索住宿候选 |
+| status | candidate_scoring | 候选评分排序 |
+| status | transport_planning | 评估路线顺路性 |
+| status | itinerary_synthesis | 生成每日行程 |
+| status | route_grounding | 校准真实地点 |
+| status | poi_enrichment | 补全 POI 信息 |
+| status | itinerary_review | 审查行程质量 |
+| status | budget_estimation | 计算每日和总预算 |
+| status | risk_notices | 生成避坑提醒 |
 | status | summary | 整理结果 |
 | result | - | 返回最终 TripResponse |
 | error | - | 返回友好错误 |
@@ -388,12 +389,12 @@ sequenceDiagram
     participant FE as 小程序
     participant API as Trip API
     participant INT as TravelIntentService
-    participant WF as LangGraph
+    participant WF as TripPlanningWorkflow
     participant WEA as WeatherImpactService
     participant CAND as CandidateSearchService
     participant SCORE as ScoringService
-    participant SYN as Synthesizer Agent
-    participant REV as Reviewer Agent
+    participant SYN as Synthesizer
+    participant REV as Reviewer
     participant BUD as BudgetService
     participant RISK as RiskNoticeService
 
@@ -506,7 +507,7 @@ sequenceDiagram
 }
 ```
 
-#### 6.2.5 synthesizer_agent
+#### 6.2.5 synthesizer
 
 职责：
 
@@ -521,7 +522,7 @@ sequenceDiagram
 3. 每日活动数量控制在合理范围，建议 3-5 个。
 4. 对雨天、高温等天气给出替代安排。
 
-#### 6.2.6 reviewer_agent
+#### 6.2.6 reviewer
 
 职责：
 
@@ -581,7 +582,7 @@ class ScoringService:
 {
     "city": "深圳",
     "preferences": ["classic", "food", "nature"],
-    "budget_amount": 7000,
+    "budgetAmount": 7000,
     "travelers": 2,
     "days": 3,
     "weather_impacts": [],
@@ -790,13 +791,14 @@ miniapp/src/
 
 1. 城市缺失校验：如果输入无法解析城市，提示“请输入目的地城市”。
 2. 天数限制：超过 7 天时提示“当前仅支持 1-7 天游”。
-3. 请求 payload 增加 `budget_amount`，保留预算档位。
+3. 请求 payload 使用 `budgetAmount` 和 `accommodationPreference`。
 
 ### 11.3 生成页
 
-当前生成页使用本地定时模拟进度。建议演进为：
+当前生成页通过异步任务轮询展示后端进度：
 
-1. 优先接入 `/api/trip/plan/stream` SSE 展示真实步骤。
+1. 优先调用 `/api/trip/planning/jobs` 启动规划任务。
+2. 轮询 `/api/trip/planning/jobs/{job_id}` 展示真实步骤。
 2. 如果小程序环境 SSE 支持受限，保留本地进度作为 fallback。
 3. 失败时显示明确错误：城市缺失、POI 为空、天气失败、模型超时等。
 
@@ -1611,60 +1613,62 @@ CREATE TABLE IF NOT EXISTS app_config_settings (
 
 ## 13. 现有模块改造建议
 
-### 13.1 `backend/app/api/trip.py`
+### 13.1 API 路由拆分
 
-当前问题：
+当前结构：
 
-1. API 层包含了状态转换、错误转换、存储 payload 转换等多种职责。
-2. `_to_state` 对预算金额支持不足。
+1. `backend/app/api/trip_planning.py`：规划、异步任务、SSE。
+2. `backend/app/api/trip_plans.py`：行程保存、历史、删除。
+3. `backend/app/api/map_routes.py`：地图路线接口。
+4. `backend/app/api/map_routes.py`：地图路线 polyline 接口。
 
-改造建议：
+设计要求：
 
-1. 保留路由定义。
-2. 将请求归一化迁移到 `TravelIntentService`。
-3. 将 response 组装迁移到 `TripResponseAssembler` 或 `TripNormalizeService`。
-4. 新增 `budget_amount` 支持。
+1. API 层只做 HTTP 输入输出。
+2. 请求归一化放在 `trip_planning/state.py`。
+3. response 组装放在 `trip_planning/response.py`。
+4. 异步任务状态放在 `trip_planning/jobs.py`。
 
-### 13.2 `backend/app/graph/graph.py`
+### 13.2 `backend/app/trip_planning/workflow.py`
 
-当前设计合理：
+当前设计目标：
 
-1. 适合保留 LangGraph。
-2. 并行任务节点对景点、餐饮、酒店搜索有价值。
+1. 保留 Plan-Execute-Replan 闭环，避免自治编排。
+2. Executor 中天气、景点、餐饮、住宿、交通等工具能力按 action 执行。
+3. 规划进度通过 SSE 和异步 job service 暴露给小程序。
 
-改造建议：
+优化建议：
 
-1. 在候选搜索后增加 `scoring` 节点。
-2. 将天气节点前置到候选评分前。
-3. 在 summary 前增加 `risk_notice` 节点。
+1. 为每个步骤记录耗时和 provider 错误。
+2. 持续压缩候选数量，降低最终整合耗时。
+3. 将 response 组装继续保持在 `trip_planning/response.py`。
 
 建议目标流程：
 
 ```text
-planner_agent
- -> weather_tool
- -> task_router / parallel candidate tasks
- -> scoring
- -> transport_agent
- -> synthesizer_agent
- -> reviewer_agent
- -> budget
- -> risk_notice
+request_analysis
+ -> planner
+ -> executor
+ -> replanner
+ -> transport_planning
+ -> finalizer
+ -> budget_estimation
+ -> risk_notices
  -> summary
 ```
 
-### 13.3 `backend/app/agents/workers/*`
+### 13.3 `backend/app/trip_planning/tool_executor.py`
 
 当前问题：
 
-1. Worker Agent 内部可能同时承担搜索、排序和筛选。
+1. Worker 内部不应承担全局排序和最终决策。
 2. 评分逻辑分散，不利于解释和调试。
 
 改造建议：
 
 1. Worker 只负责搜索候选和初步清洗。
 2. 评分统一交给 `ScoringService`。
-3. Candidate 结构统一，避免各 Agent 输出字段不一致。
+3. Candidate 结构统一，避免各步骤输出字段不一致。
 
 ### 13.4 `miniapp/src/stores/tripStore.ts`
 
@@ -1723,8 +1727,8 @@ planner_agent
 
 应覆盖：
 
-1. `/api/trip/plan` 正常生成。
-2. `/api/trip/plan` 无城市失败。
+1. `/api/trip/planning` 正常生成。
+2. `/api/trip/planning` 无城市失败。
 3. 外部 POI 为空时的错误提示。
 4. 天气失败时仍可生成行程。
 
@@ -1746,14 +1750,14 @@ planner_agent
 ### 阶段一：输入和数据结构收敛
 
 1. 完成城市必填和 1-7 天游校验。
-2. 请求体增加 `budget_amount`。
+2. 请求体使用 `budgetAmount`。
 3. 扩展前后端 TripResponse/Trip 类型。
 
 ### 阶段二：评分和天气影响
 
 1. 新增 `ScoringService`。
 2. 新增 `WeatherImpactService`。
-3. 调整 LangGraph 节点顺序。
+3. 调整 TripPlanningWorkflow 节点和工具动作顺序。
 4. Synthesizer 使用 scored candidates。
 
 ### 阶段三：预算和避坑提醒
@@ -1791,6 +1795,6 @@ planner_agent
 
 ## 18. 总结
 
-本详细设计建议保留当前“多 Agent + LangGraph”的主架构，因为它适合旅游规划这种多步骤、多约束、多工具调用的任务。但为了让系统具备生产级可维护性，需要将通用决策逻辑从 Agent 中拆出来，形成独立的评分、天气影响、预算、风险提醒和标准化模块。
+本详细设计建议采用当前已经落地的 `TripPlanningWorkflow` 工作流。它适合旅游规划这种多步骤、多约束、多工具调用的任务，同时比自主编排更可控、更容易压缩耗时。为了让系统具备生产级可维护性，需要将通用决策逻辑持续沉淀为独立的候选清洗、天气影响、预算、风险提醒和标准化模块。
 
 第一阶段后端重点是生成可信、可解释、可评分的结构化行程；小程序重点是让用户能本地编辑和导出最终方案。这样既能利用 AI 的规划能力，又能给用户保留最终控制权，符合“智能旅游规划助手”而不是简单推荐列表的产品定位。

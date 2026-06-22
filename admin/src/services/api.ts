@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { AdminOverview, AdminUser, AgentStatus, AuthResponse } from '@/types/admin'
+import type { AdminOverview, AdminUser, RuntimeStatus, AuthResponse } from '@/types/admin'
 
 const AUTH_STORAGE_KEY = 'travel_admin_auth'
 
@@ -64,15 +64,15 @@ export const adminApi = {
     return (await api.get('/admin/overview', { params })) as AdminOverview
   },
 
-  async getAgentStatus(): Promise<AgentStatus> {
-    return (await api.get('/admin/agent-status')) as AgentStatus
+  async getRuntimeStatus(): Promise<RuntimeStatus> {
+    return (await api.get('/admin/runtime-status')) as RuntimeStatus
   },
 
   async updateSettings(payload: {
     llm?: { provider?: string; model?: string; api_key?: string }
     map?: { provider?: string; api_key?: string }
-  }): Promise<AgentStatus> {
-    return (await api.put('/admin/settings', payload)) as AgentStatus
+  }): Promise<RuntimeStatus> {
+    return (await api.put('/admin/settings', payload)) as RuntimeStatus
   },
 
   async listUsers(): Promise<{ users: AdminUser[] }> {

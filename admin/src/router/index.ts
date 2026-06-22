@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import AdminLayout from '@/views/AdminLayout.vue'
-import AgentStatusView from '@/views/AgentStatusView.vue'
+import RuntimeStatusView from '@/views/RuntimeStatusView.vue'
 import LoginView from '@/views/LoginView.vue'
 import OverviewView from '@/views/OverviewView.vue'
 import TrendView from '@/views/TrendView.vue'
@@ -35,10 +35,10 @@ const router = createRouter({
           meta: { title: '平台趋势 - AI 旅行规划管理后台' }
         },
         {
-          path: 'agent',
-          name: 'agent',
-          component: AgentStatusView,
-          meta: { title: 'Agent 状态 - AI 旅行规划管理后台' }
+          path: 'runtime',
+          name: 'runtime',
+          component: RuntimeStatusView,
+          meta: { title: '运行状态 - AI 旅行规划管理后台' }
         },
         {
           path: 'users',

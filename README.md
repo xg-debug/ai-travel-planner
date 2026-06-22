@@ -10,24 +10,28 @@
 - **天气预报**: 获取目的地实时天气和预报
 - **个性化推荐**: 根据用户偏好推荐景点、美食、活动
 - **预算估算**: 智能估算旅行费用，提供省钱建议
-- **可视化展示**: 美观的界面展示行程、地图、天气等信息
+- **移动端展示**: 微信小程序展示行程、地图、天气、预算和历史记录
 
 ### 🛠️ 技术栈
 
 **后端 (Python)**
 - FastAPI - 高性能Web框架
-- LangChain/LangGraph - AI工作流编排
+- LangChain - LLM Provider 适配
+- LangGraph Plan-Execute-Replan - 旅行规划工作流
 - 多LLM支持 (OpenAI, Anthropic, DeepSeek, Google)
 - 高德地图API集成
 - SQLAlchemy - 数据库ORM
 - Redis - 缓存
 
-**前端 (Vue 3)**
-- Vue 3 + TypeScript
-- Vite - 构建工具
-- Ant Design Vue - UI组件库
-- 高德地图JavaScript API
-- Axios - HTTP客户端
+**小程序端 (uni-app)**
+- uni-app + Vue 3 + TypeScript
+- Pinia - 移动端状态管理
+- 微信原生地图组件
+- SSE 流式生成，失败时按错误类型兜底
+
+**管理端 (Vue 3)**
+- Vue 3 + TypeScript + Vite
+- 运行时模型与地图配置管理
 
 ## 🚀 快速开始
 
@@ -65,23 +69,30 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 3. 前端设置
+### 3. 小程序设置
 ```bash
-cd frontend
+cd miniapp
 
 # 安装依赖
 npm install
 
-# 启动开发服务器
-npm run dev
+# 微信小程序开发构建
+npm run dev:mp-weixin
 
-# 或使用脚本
-chmod +x start.sh
-./start.sh
+# 类型检查
+npm run type-check
 ```
 
-### 4. 访问应用
-- 前端: http://localhost:5173
+### 4. 管理端设置
+```bash
+cd admin
+npm install
+npm run dev
+```
+
+### 5. 访问应用
+- 小程序: 使用微信开发者工具打开 `miniapp/dist/dev/mp-weixin`
+- 管理端: http://localhost:5173
 - 后端API文档: http://localhost:8000/docs
 - 后端健康检查: http://localhost:8000/health
 
@@ -92,36 +103,40 @@ ai-travel-planner/
 ├── backend/                    # 后端代码
 │   ├── app/
 │   │   ├── api/               # API路由
-│   │   │   └── trip.py        # 旅行相关API
+│   │   │   ├── trip_planning.py   # 规划与异步任务
+│   │   │   ├── trip_plans.py      # 行程保存与历史
+│   │   │   └── map_routes.py      # 地图路线接口
 │   │   ├── core/              # 核心配置
 │   │   │   ├── config.py      # 配置文件
 │   │   │   └── llm.py         # LLM工厂
-│   │   ├── graph/             # LangGraph工作流
-│   │   │   ├── graph.py       # 图定义
-│   │   │   ├── nodes.py       # 节点函数
-│   │   │   └── state.py       # 状态定义
+│   │   ├── trip_planning/     # LangGraph 旅行规划工作流
+│   │   │   ├── workflow.py    # TripPlanningWorkflow
+│   │   │   ├── nodes.py       # Planner / Executor / Replanner / Finalizer 节点
+│   │   │   ├── tool_executor.py # 天气、POI、住宿、交通工具执行
+│   │   │   ├── state.py       # 请求归一化与进度状态
+│   │   │   ├── jobs.py        # 异步任务状态
+│   │   │   └── errors.py      # 规划错误分类
+│   │   ├── mcp_tools/         # 地图 MCP/REST Provider
 │   │   ├── services/          # 业务服务
 │   │   │   ├── amap_service.py    # 地图服务
-│   │   │   ├── recommendation_service.py  # 推荐服务
-│   │   │   └── budget_service.py   # 预算服务
+│   │   │   ├── map_route_service.py # 地图路线服务
+│   │   │   └── runtime_config.py    # 运行时配置
 │   │   └── main.py            # 应用入口
 │   ├── requirements.txt       # Python依赖
 │   ├── .env.example          # 环境变量示例
 │   └── start.sh             # 启动脚本
 │
-├── frontend/                  # 前端代码
+├── miniapp/                   # 微信小程序端
 │   ├── src/
-│   │   ├── components/       # Vue组件
-│   │   │   ├── InputPanel.vue   # 输入面板
-│   │   │   ├── ResultPanel.vue  # 结果面板
-│   │   │   └── MapPanel.vue     # 地图面板
-│   │   ├── services/         # API服务
-│   │   │   └── api.ts        # API客户端
-│   │   ├── App.vue           # 主应用
-│   │   └── main.ts           # 入口文件
-│   ├── package.json          # 依赖配置
-│   ├── vite.config.ts        # Vite配置
-│   └── start.sh             # 启动脚本
+│   │   ├── pages/            # 小程序页面
+│   │   ├── components/       # 移动端组件
+│   │   ├── services/         # uni.request / SSE 请求封装
+│   │   ├── stores/           # Pinia 状态
+│   │   └── utils/            # 行程转换与展示
+│   └── package.json
+│
+├── admin/                     # 管理端
+│   └── src/
 │
 └── README.md                 # 项目文档
 ```
@@ -139,15 +154,22 @@ DEEPSEEK_API_KEY=your_deepseek_api_key
 GOOGLE_API_KEY=your_google_api_key
 
 # 默认LLM配置
-DEFAULT_LLM_PROVIDER=
-DEFAULT_LLM_MODEL=
+DEFAULT_LLM_PROVIDER=deepseek
+DEFAULT_LLM_MODEL=deepseek-v4-flash
 LLM_TEMPERATURE=
 LLM_MAX_TOKENS=
 ```
 
 #### 地图服务
 ```env
+# 推荐：高德地图 MCP Server SSE
+MAP_PROVIDER=amap_mcp_sse
+AMAP_MCP_SSE_URL=your_amap_mcp_sse_url
+AMAP_MCP_API_KEY=your_amap_mcp_key
+
+# 备用：直接调用地图 REST API
 AMAP_API_KEY=your_amap_api_key
+TENCENT_MAP_API_KEY=your_tencent_map_key
 UNSPLASH_ACCESS_KEY=your_unsplash_access_key
 UNSPLASH_SECRET_KEY=your_unsplash_secret_key
 ```
@@ -165,10 +187,9 @@ DATABASE_URL=mysql+pymysql://travel_user:travel_password@127.0.0.1:3306/ai_trave
 SECRET_KEY=your-secret-key-change-in-production
 ```
 
-### 环境变量 (frontend/.env)
+### 环境变量 (miniapp/.env)
 ```env
-VITE_API_BASE_URL=http://localhost:8000
-VITE_AMAP_KEY=your_amap_key_here
+VITE_API_BASE_URL=http://localhost:8000/api
 ```
 
 ## 📊 API接口
@@ -177,75 +198,60 @@ VITE_AMAP_KEY=your_amap_key_here
 
 #### 1. 规划行程
 ```http
-POST /trip/plan
+POST /api/trip/planning
 Content-Type: application/json
 
 {
-  "query": "家庭旅行，适合小朋友的景点",
-  "city": "北京",
+  "departureCity": "上海",
+  "destination": "北京",
+  "startDate": "2026-07-15",
+  "endDate": "2026-07-17",
+  "departureTime": "08:00",
+  "returnArrivalTime": "20:00",
   "days": 3,
-  "preferences": ["culture", "family"],
-  "budget": "中等",
-  "travelers": 4
-}
-```
-
-#### 2. 获取天气
-```http
-GET /weather?city=北京&days=3
-```
-
-#### 3. 搜索POI
-```http
-GET /pois/search?keyword=故宫&city=北京&page=1&size=10
-```
-
-#### 4. 获取推荐
-```http
-GET /recommendations?city=北京&preferences=culture,food
-```
-
-#### 5. 估算预算
-```http
-POST /budget/estimate
-Content-Type: application/json
-
-{
-  "itinerary": [...],
   "travelers": 4,
-  "budget_level": "中等"
+  "interests": ["classic", "history"],
+  "budgetAmount": 12000,
+  "accommodationPreference": "mid-range",
+  "additionalRequirements": "家庭旅行，适合小朋友的景点"
 }
 ```
 
-## 🎨 前端功能
+#### 2. 流式规划
+```http
+POST /api/trip/planning/stream
+```
+
+#### 3. 异步任务规划
+```http
+POST /api/trip/planning/jobs
+GET /api/trip/planning/jobs/{job_id}
+```
+
+#### 4. 行程管理
+```http
+GET /api/trip/plans
+POST /api/trip/plans
+GET /api/trip/plans/{id}
+PUT /api/trip/plans/{id}
+DELETE /api/trip/plans/{id}
+```
+
+#### 5. 地图路线
+```http
+POST /api/trip/route/map
+```
+
+## 🎨 小程序功能
 
 ### 主要界面
 
-1. **首页**
-   - 欢迎界面和系统介绍
-   - 统计数据展示
-
-2. **行程规划面板**
-   - 目的地城市输入（带自动补全）
-   - 旅行天数选择
-   - 偏好选择（文化、美食、自然等）
-   - 详细需求描述
-   - 示例提示
-
-3. **结果展示区**
-   - 行程概览（天数、景点数、预计时间）
-   - 每日详细安排（时间线展示）
-   - 景点信息和实用建议
-   - 加载动画和进度指示
-
-4. **地图展示区**
-   - 交互式地图显示景点位置
-   - POI列表和详情查看
-   - 地图控制（缩放、重置）
-   - 路线规划
-
-5. **推荐区域**
-   - 个性化推荐卡片
+1. **用户需求页**：出发地、目的地、日期、人数、偏好、预算和住宿档位。
+2. **生成中页**：SSE 真实进度；余额不足、密钥无效等不可重试错误会立即停止。
+3. **行程总览页**：每日安排、推荐景点、美食推荐、酒店推荐、预算、往返交通。
+4. **路线大图**：微信原生地图组件展示真实道路 polyline。
+5. **地点详情页**：地点信息、参考价格、营业时间和站内地图定位。
+6. **历史行程与登录页**：支持登录、保存和加载历史行程。
    - 基于偏好的智能推荐
    - 实用信息和建议
 
@@ -266,12 +272,12 @@ graph TD
 
 ## 🧪 测试数据
 
-如果没有配置API密钥，系统会使用模拟数据：
+如果没有配置 API Key 或模型余额不足，系统会返回明确错误：
 
-- **模拟POI数据**: 自动生成景点信息
-- **模拟天气数据**: 生成未来几天的天气预报
-- **模拟推荐数据**: 基于偏好生成推荐
-- **模拟预算数据**: 根据预算水平估算费用
+- `LLM_INSUFFICIENT_BALANCE`：模型账户余额不足，不会在小程序端反复重试。
+- `LLM_INVALID_API_KEY`：模型密钥无效。
+- `LLM_NOT_CONFIGURED`：未配置任何可用模型。
+- 地图 Key 缺失时，路线和 POI 能力会降级或提示配置问题。
 
 ## 🚨 故障排除
 
@@ -282,14 +288,15 @@ graph TD
    - 检查依赖安装：`pip install -r requirements.txt`
    - 检查端口占用：`lsof -i:8000`
 
-2. **前端启动失败**
-   - 检查Node.js版本（需要16+）
-   - 清除node_modules重新安装：`rm -rf node_modules && npm install`
+2. **小程序构建失败**
+   - 检查 Node.js 版本（建议 24）
+   - 在 `miniapp/` 下重新安装依赖：`npm install`
+   - 运行 `npm run type-check` 定位类型错误
 
 3. **地图不显示**
-   - 检查高德地图API密钥配置
+   - 检查高德/腾讯地图 API Key 或高德 MCP SSE 配置
    - 检查网络连接
-   - 查看浏览器控制台错误信息
+   - 查看微信开发者工具 Console 和 Network
 
 4. **AI功能不可用**
    - 检查LLM API密钥配置
@@ -303,41 +310,39 @@ graph TD
 cd backend
 tail -f logs/app.log
 
-# 前端日志
-# 在浏览器开发者工具中查看Console和Network标签
+# 小程序日志
+# 在微信开发者工具中查看 Console 和 Network
 ```
 
 ## 📈 性能优化
 
 ### 缓存策略
-- Redis缓存频繁查询的数据
-- 浏览器本地存储用户偏好
-- CDN加速静态资源
+- POI、天气、路线查询使用后端轻量缓存
+- 小程序本地缓存最近一次行程和草稿
+- 路线大图按天请求真实道路 polyline
 
 ### 异步处理
-- 使用Celery处理耗时任务
-- 前端使用Web Workers处理大量数据
-- 图片懒加载和代码分割
+- SSE 优先推送真实规划进度
+- 基础库不支持分块响应时，降级为异步 Job 状态接口
+- 不可重试错误（余额不足、Key 无效）直接终止，不再重复发起任务
 
 ### 监控指标
-- API响应时间
-- 错误率监控
-- 用户行为分析
-- 系统资源使用情况
+- API 响应时间和规划耗时
+- LLM 错误码、余额/Key 配置问题
+- 地图路线真实 polyline 命中率
+- 小程序生成失败率和重试率
 
 ## 🔮 未来规划
 
 ### 短期计划
-- [ ] 用户系统（登录、注册、保存行程）
-- [ ] 更多地图提供商支持（百度地图、Google Maps）
-- [ ] 实时交通信息
-- [ ] 多语言支持
+- [ ] 接入更可靠的酒店价格/库存数据源
+- [ ] 增加景点门票和营业时间的二次校验
+- [ ] 完善行程编辑与分享卡片
+- [ ] 增加路线规划命中率监控
 
 ### 长期计划
-- [ ] 移动端应用
-- [ ] 社交分享功能
+- [ ] 社交分享和协同行程
 - [ ] AI导游语音助手
-- [ ] VR/AR景点预览
 - [ ] 智能拍照建议
 
 ## 📄 许可证

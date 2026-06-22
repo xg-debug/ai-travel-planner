@@ -1,2 +1,0 @@
-"""Synthesizer agent package."""
-

@@ -1,9 +1,9 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { tripApi, type PlanJobResponse } from '@/services/tripApi'
-import type { Trip, TripRequest } from '@/types/trip'
+import { tripApi, type PlanProgressEvent } from '@/services/tripApi'
+import type { HotelRecommendation, POI, Trip, TripRequest } from '@/types/trip'
 import { addDays } from '@/utils/format'
-import { convertTripResponse, mapBudgetLevel } from '@/utils/tripTransform'
+import { convertTripResponse } from '@/utils/tripTransform'
 import { useAuthStore } from '@/stores/authStore'
 
 type StepStatus = 'pending' | 'active' | 'done' | 'error'
@@ -15,30 +15,20 @@ export interface GenerationStep {
 }
 
 const LAST_TRIP_KEY = 'cybertravel_last_trip'
+const TRIP_TIMESTAMP_KEY = 'cybertravel_last_trip_ts'
 const DRAFT_KEY = 'cybertravel_plan_draft'
-const STEP_ALIASES: Record<string, string> = {
-  synthesizer_agent_done: 'synthesizer_agent',
-  route_grounding: 'poi_agent',
-  reflection_rerun: 'reviewer_agent'
-}
-
-const buildDateTime = (date?: string, time?: string) => (
-  date && time ? `${date} ${time}` : undefined
-)
-
+const TRIP_MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
 const buildSteps = (): GenerationStep[] => [
-  { key: 'planner_agent', label: '拆解旅行需求', status: 'pending' },
-  { key: 'weather_tool', label: '获取天气', status: 'pending' },
-  { key: 'attraction_agent', label: '搜索景点', status: 'pending' },
-  { key: 'food_agent', label: '安排餐饮', status: 'pending' },
-  { key: 'hotel_agent', label: '推荐住宿', status: 'pending' },
-  { key: 'scoring', label: '评分排序', status: 'pending' },
-  { key: 'transport_agent', label: '评估往返交通', status: 'pending' },
-  { key: 'synthesizer_agent', label: '生成每日行程', status: 'pending' },
-  { key: 'poi_agent', label: '补全地点信息', status: 'pending' },
-  { key: 'reviewer_agent', label: '审查行程质量', status: 'pending' },
-  { key: 'budget', label: '计算预算', status: 'pending' },
-  { key: 'risk_notice', label: '生成提醒', status: 'pending' },
+  { key: 'request_analysis', label: '拆解旅行需求', status: 'pending' },
+  { key: 'weather_lookup', label: '执行工具查询', status: 'pending' },
+  { key: 'attraction_search', label: '筛选景点', status: 'pending' },
+  { key: 'food_search', label: '筛选美食', status: 'pending' },
+  { key: 'hotel_search', label: '匹配住宿', status: 'pending' },
+  { key: 'transport_planning', label: '规划交通', status: 'pending' },
+  { key: 'itinerary_review', label: '检查结果', status: 'pending' },
+  { key: 'itinerary_synthesis', label: '生成每日行程', status: 'pending' },
+  { key: 'budget_estimation', label: '计算预算', status: 'pending' },
+  { key: 'risk_notices', label: '生成提醒', status: 'pending' },
   { key: 'summary', label: '整理结果', status: 'pending' }
 ]
 
@@ -49,17 +39,30 @@ export const useTripStore = defineStore('trip', () => {
   const isGenerating = ref(false)
   const isLoadingHistory = ref(false)
   const error = ref('')
+  const errorCode = ref('')
+  const errorRetryable = ref(true)
   const steps = ref<GenerationStep[]>(buildSteps())
   const activeStepIndex = ref(0)
   let localTimer: ReturnType<typeof setInterval> | null = null
 
   const hasCurrentTrip = computed(() => Boolean(currentTrip.value))
+  const isTripStale = computed(() => {
+    if (!currentTrip.value) return false
+    const savedAt = uni.getStorageSync(TRIP_TIMESTAMP_KEY) as number | ''
+    if (!savedAt) return false
+    return Date.now() - Number(savedAt) > TRIP_MAX_AGE_MS
+  })
   const activeStepLabel = computed(() => steps.value[activeStepIndex.value]?.label || '准备生成')
 
   const restoreLocal = () => {
     const savedTrip = uni.getStorageSync(LAST_TRIP_KEY) as Trip | ''
     const savedDraft = uni.getStorageSync(DRAFT_KEY) as TripRequest | ''
-    if (savedTrip) currentTrip.value = savedTrip
+    if (savedTrip) {
+      currentTrip.value = savedTrip
+      if (isTripStale.value) {
+        uni.showToast({ title: '行程天气数据可能已过期，建议重新规划', icon: 'none', duration: 2500 })
+      }
+    }
     if (savedDraft) draft.value = savedDraft
   }
 
@@ -100,9 +103,9 @@ export const useTripStore = defineStore('trip', () => {
     }))
   }
 
-  const applyRemoteProgress = (job: PlanJobResponse) => {
-    const rawStep = String(job.step || '').trim()
-    const normalizedStep = STEP_ALIASES[rawStep] || rawStep
+  const applyRemoteProgress = (event: PlanProgressEvent) => {
+    const rawStep = String(event.step || '').trim()
+    const normalizedStep = rawStep
     if (!normalizedStep) return
 
     const nextIndex = steps.value.findIndex((step) => step.key === normalizedStep)
@@ -120,28 +123,11 @@ export const useTripStore = defineStore('trip', () => {
     if (!draft.value) throw new Error('请先填写旅行需求')
     isGenerating.value = true
     error.value = ''
+    errorCode.value = ''
+    errorRetryable.value = true
     startLocalProgress()
     try {
-      const departureCity = draft.value.departureCity || ''
-      const outboundDepartureDatetime = buildDateTime(draft.value.startDate, draft.value.departureTime)
-      const returnArrivalDatetime = buildDateTime(draft.value.endDate, draft.value.returnArrivalTime)
-      const payload = {
-        query: [
-          `${draft.value.destination} ${draft.value.days}日游`,
-          draft.value.additionalRequirements || ''
-        ].filter(Boolean).join('，'),
-        city: draft.value.destination,
-        departure_city: departureCity,
-        days: draft.value.days,
-        preferences: draft.value.interests,
-        budget: mapBudgetLevel(draft.value.budget, draft.value.days, draft.value.travelers),
-        budget_amount: draft.value.budget,
-        travelers: draft.value.travelers,
-        start_date: draft.value.startDate,
-        outbound_departure_datetime: outboundDepartureDatetime,
-        return_arrival_datetime: returnArrivalDatetime
-      }
-      const response = await tripApi.planTripWithPolling(payload, applyRemoteProgress)
+      const response = await tripApi.planTripRealtime(draft.value, applyRemoteProgress)
       const trip = convertTripResponse(response, draft.value)
       if (!trip.days.length) throw new Error(response.plan || 'AI 未生成可用行程，请稍后重试')
 
@@ -152,6 +138,7 @@ export const useTripStore = defineStore('trip', () => {
 
       currentTrip.value = savedTrip as Trip
       uni.setStorageSync(LAST_TRIP_KEY, currentTrip.value)
+      uni.setStorageSync(TRIP_TIMESTAMP_KEY, Date.now())
       tripHistory.value = [
         currentTrip.value,
         ...tripHistory.value.filter((item) => item.id !== currentTrip.value?.id)
@@ -160,6 +147,8 @@ export const useTripStore = defineStore('trip', () => {
       return currentTrip.value
     } catch (err) {
       error.value = err instanceof Error ? err.message : '生成失败'
+      errorCode.value = String((err as any)?.code || '')
+      errorRetryable.value = (err as any)?.retryable !== false
       markError()
       throw err
     } finally {
@@ -193,6 +182,7 @@ export const useTripStore = defineStore('trip', () => {
     if (local) {
       currentTrip.value = local
       uni.setStorageSync(LAST_TRIP_KEY, local)
+      uni.setStorageSync(TRIP_TIMESTAMP_KEY, Date.now())
       return local
     }
     const authStore = useAuthStore()
@@ -200,6 +190,7 @@ export const useTripStore = defineStore('trip', () => {
     const remote = await tripApi.getTripPlan(id)
     currentTrip.value = remote as Trip
     uni.setStorageSync(LAST_TRIP_KEY, currentTrip.value)
+    uni.setStorageSync(TRIP_TIMESTAMP_KEY, Date.now())
     return currentTrip.value
   }
 
@@ -214,6 +205,41 @@ export const useTripStore = defineStore('trip', () => {
       if (currentTrip.value) uni.setStorageSync(LAST_TRIP_KEY, currentTrip.value)
       else uni.removeStorageSync(LAST_TRIP_KEY)
     }
+  }
+
+  const updateCurrentTrip = (updater: (trip: Trip) => Trip) => {
+    if (!currentTrip.value) return null
+    currentTrip.value = updater(currentTrip.value)
+    uni.setStorageSync(LAST_TRIP_KEY, currentTrip.value)
+    uni.setStorageSync(TRIP_TIMESTAMP_KEY, Date.now())
+    tripHistory.value = tripHistory.value.map((item) =>
+      item.id === currentTrip.value?.id ? currentTrip.value : item
+    )
+    return currentTrip.value
+  }
+
+  const setTripHotel = (hotel: POI) => {
+    const recommendation: HotelRecommendation = {
+      name: hotel.name,
+      address: hotel.address || '',
+      priceEstimate: hotel.priceText || '',
+      referencePriceRange: hotel.referencePriceRange || hotel.priceText || '',
+      budgetPricePerRoom: hotel.budgetPricePerRoom,
+      reason: hotel.description || `${hotel.name}适合作为本次路线的住宿落点。`,
+      rating: hotel.rating,
+      coordinates: hotel.location?.lat && hotel.location?.lng
+        ? { lat: hotel.location.lat, lng: hotel.location.lng }
+        : undefined
+    }
+    return updateCurrentTrip((trip) => ({
+      ...trip,
+      hotels: [
+        hotel,
+        ...(trip.hotels || []).filter((item) => item.id !== hotel.id && item.name !== hotel.name)
+      ],
+      days: trip.days.map((day) => ({ ...day, hotel: recommendation })),
+      updatedAt: new Date().toISOString()
+    }))
   }
 
   const clearLocal = () => {
@@ -231,9 +257,12 @@ export const useTripStore = defineStore('trip', () => {
     isGenerating,
     isLoadingHistory,
     error,
+    errorCode,
+    errorRetryable,
     steps,
     activeStepIndex,
     hasCurrentTrip,
+    isTripStale,
     activeStepLabel,
     restoreLocal,
     setDraft,
@@ -241,6 +270,7 @@ export const useTripStore = defineStore('trip', () => {
     loadHistory,
     loadTrip,
     deleteTrip,
+    setTripHotel,
     clearLocal,
     stopLocalProgress
   }

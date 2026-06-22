@@ -1,4 +1,4 @@
-import { request } from '@/services/request'
+import { request, buildApiUrl } from '@/services/request'
 import type { AuthResponse, AuthUser, PlanTripRequest, TripResponse } from '@/types/trip'
 
 export interface ForgotPasswordResponse {
@@ -21,12 +21,80 @@ export interface PlanJobResponse {
   progress?: number
   updated_at?: number
   result?: TripResponse | null
+  partial_result?: TripResponse | null
   error?: string
+  error_code?: string
+  retryable?: boolean
+}
+
+type PlanStreamEventName = 'status' | 'partial_result' | 'result' | 'done' | 'error'
+
+export interface PlanStreamEvent {
+  event: PlanStreamEventName
+  data: any
+}
+
+export interface PlanProgressEvent {
+  step?: string
+  message?: string
+  progress?: number
+  partial_result?: TripResponse | null
+}
+
+type PlanningError = Error & {
+  code?: string
+  retryable?: boolean
+  operatorAction?: string
+}
+
+type ChunkedRequestTask = UniApp.RequestTask & {
+  onChunkReceived?: (callback: (response: { data: ArrayBuffer }) => void) => void
 }
 
 const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 const PLAN_JOB_MAX_WAIT_MS = 30 * 60 * 1000
+const PLAN_JOB_POLL_INTERVAL_INITIAL_MS = 1000
 const PLAN_JOB_POLL_INTERVAL_MS = 2500
+
+const parseSseChunk = (chunk: string, onEvent: (event: PlanStreamEvent) => void) => {
+  const blocks = chunk.replace(/\r\n/g, '\n').split('\n\n')
+  const rest = blocks.pop() || ''
+  for (const block of blocks) {
+    const lines = block.split('\n')
+    let event: PlanStreamEventName = 'status'
+    const dataLines: string[] = []
+    for (const line of lines) {
+      if (line.startsWith('event:')) event = line.slice(6).trim() as PlanStreamEventName
+      if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+    }
+    if (!dataLines.length) continue
+    try {
+      onEvent({ event, data: JSON.parse(dataLines.join('\n')) })
+    } catch (error) {
+      console.warn('Failed to parse planning SSE event:', error)
+    }
+  }
+  return rest
+}
+
+const createPlanningError = (payload: any, fallback = '行程规划失败，请稍后重试'): PlanningError => {
+  const error = new Error(String(payload?.message || payload?.error || fallback)) as PlanningError
+  error.code = String(payload?.code || payload?.error_code || '')
+  error.retryable = payload?.retryable !== false
+  error.operatorAction = String(payload?.operator_action || payload?.operatorAction || '')
+  return error
+}
+
+const isNonRetryablePlanningError = (error: unknown) => {
+  const item = error as PlanningError
+  if (item?.retryable === false) return true
+  const text = String(item?.message || error || '').toLowerCase()
+  return text.includes('余额不足')
+    || text.includes('insufficient balance')
+    || text.includes('api key')
+    || text.includes('密钥')
+    || text.includes('未配置')
+}
 
 export const tripApi = {
   register(email: string, password: string, name?: string, rememberMe = true) {
@@ -67,7 +135,7 @@ export const tripApi = {
 
   planTrip(payload: PlanTripRequest) {
     return request<TripResponse>({
-      url: '/trip/plan',
+      url: '/trip/planning',
       method: 'POST',
       data: payload,
       timeout: 300000
@@ -76,7 +144,7 @@ export const tripApi = {
 
   startPlanTripJob(payload: PlanTripRequest) {
     return request<PlanJobStartResponse>({
-      url: '/trip/plan/jobs',
+      url: '/trip/planning/jobs',
       method: 'POST',
       data: payload,
       timeout: 30000
@@ -85,7 +153,7 @@ export const tripApi = {
 
   getPlanTripJob(jobId: string) {
     return request<PlanJobResponse>({
-      url: `/trip/plan/jobs/${jobId}`,
+      url: `/trip/planning/jobs/${jobId}`,
       timeout: 30000
     })
   },
@@ -96,8 +164,12 @@ export const tripApi = {
 
     const deadline = Date.now() + PLAN_JOB_MAX_WAIT_MS
     let pollingFailures = 0
+    let pollCount = 0
     while (Date.now() < deadline) {
-      await wait(PLAN_JOB_POLL_INTERVAL_MS)
+      // Adaptive polling: start fast (1s) then slow down (2.5s) after 5 polls
+      const interval = pollCount < 5 ? PLAN_JOB_POLL_INTERVAL_INITIAL_MS : PLAN_JOB_POLL_INTERVAL_MS
+      pollCount += 1
+      await wait(interval)
       let job: PlanJobResponse
       try {
         job = await this.getPlanTripJob(started.job_id)
@@ -113,10 +185,94 @@ export const tripApi = {
         return job.result
       }
       if (job.status === 'failed') {
-        throw new Error(job.error || '行程规划失败，请稍后重试')
+        throw createPlanningError({
+          message: job.error || '行程规划失败，请稍后重试',
+          code: job.error_code,
+          retryable: job.retryable
+        })
       }
     }
     throw new Error('规划任务等待超时，请稍后在行程页查看或重新生成')
+  },
+
+  planTripWithSse(payload: PlanTripRequest, onProgress?: (event: PlanProgressEvent) => void) {
+    return new Promise<TripResponse>((resolve, reject) => {
+      let buffer = ''
+      let settled = false
+      let requestTask: ChunkedRequestTask | null = null
+
+      const finish = (callback: () => void) => {
+        if (settled) return
+        settled = true
+        callback()
+      }
+
+      requestTask = uni.request({
+        url: buildApiUrl('/trip/planning/stream'),
+        method: 'POST',
+        data: payload as any,
+        timeout: PLAN_JOB_MAX_WAIT_MS,
+        enableChunked: true,
+        header: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream'
+        },
+        success: (res) => {
+          if (settled) return
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            finish(() => reject(new Error('规划服务暂时不可用，请稍后重试')))
+          }
+        },
+        fail: (err) => {
+          finish(() => reject(new Error(String((err as any)?.errMsg || 'SSE 连接失败'))))
+        }
+      }) as ChunkedRequestTask
+
+      if (!requestTask?.onChunkReceived) {
+        finish(() => reject(new Error('当前微信基础库不支持流式生成')))
+        return
+      }
+
+      requestTask.onChunkReceived((response: { data: ArrayBuffer }) => {
+        const text = arrayBufferToText(response.data)
+        buffer = parseSseChunk(buffer + text, (event) => {
+          if (event.event === 'status') {
+            onProgress?.(event.data || {})
+            return
+          }
+          if (event.event === 'partial_result') {
+            onProgress?.({ partial_result: event.data || null })
+            return
+          }
+          if (event.event === 'result') {
+            finish(() => resolve(event.data as TripResponse))
+            return
+          }
+          if (event.event === 'error') {
+            finish(() => reject(createPlanningError(event.data)))
+          }
+        })
+      })
+    })
+  },
+
+  async planTripRealtime(payload: PlanTripRequest, onProgress?: (event: PlanProgressEvent) => void) {
+    try {
+      return await this.planTripWithSse(payload, onProgress)
+    } catch (error) {
+      if (isNonRetryablePlanningError(error)) {
+        throw error
+      }
+      console.warn('Planning SSE unavailable, fallback to job polling:', error)
+      return this.planTripWithPolling(payload, (job) => {
+        onProgress?.({
+          step: job.step,
+          message: job.message,
+          progress: job.progress,
+          partial_result: job.partial_result
+        })
+      })
+    }
   },
 
   listTripPlans() {
@@ -150,13 +306,6 @@ export const tripApi = {
     })
   },
 
-  getWeather(city: string, days = 3) {
-    return request<any[]>({
-      url: '/trip/weather',
-      params: { city, days }
-    })
-  },
-
   planMapRoutes(payload: any) {
     return request<any>({
       url: '/trip/route/map',
@@ -164,9 +313,20 @@ export const tripApi = {
       data: payload,
       timeout: 60000
     })
-  },
+  }
+}
 
-  planTencentRoutes(payload: any) {
-    return this.planMapRoutes(payload)
+const arrayBufferToText = (buffer: ArrayBuffer) => {
+  const decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null
+  if (decoder) return decoder.decode(buffer)
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte)
+  })
+  try {
+    return decodeURIComponent(escape(binary))
+  } catch {
+    return binary
   }
 }

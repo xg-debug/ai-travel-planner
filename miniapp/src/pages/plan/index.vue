@@ -96,6 +96,25 @@
           <input v-model.number="budgetPerPerson" type="number" class="budget-field__input" />
         </view>
       </view>
+
+      <view class="setting-line setting-line--stack">
+        <view>
+          <text class="setting-line__label">住宿档位</text>
+          <text class="setting-line__hint">优先按这个标准推荐酒店，避免明显超预算</text>
+        </view>
+        <view class="stay-levels">
+          <button
+            v-for="option in accommodationOptions"
+            :key="option.id"
+            class="stay-level"
+            :class="{ active: accommodationPreference === option.id }"
+            @tap="accommodationPreference = option.id"
+          >
+            <text class="stay-level__label">{{ option.label }}</text>
+            <text class="stay-level__desc">{{ option.desc }}</text>
+          </button>
+        </view>
+      </view>
     </section>
 
     <section class="section-block">
@@ -153,7 +172,14 @@ const departureTime = ref('08:00')
 const returnArrivalTime = ref('20:00')
 const travelers = ref(2)
 const budgetPerPerson = ref(3500)
+const accommodationPreference = ref<'budget' | 'mid-range' | 'luxury'>('mid-range')
 const interests = ref<string[]>(['classic', 'food', 'history'])
+
+const accommodationOptions = [
+  { id: 'budget', label: '经济', desc: '更看重性价比' },
+  { id: 'mid-range', label: '中档', desc: '舒适和预算平衡' },
+  { id: 'luxury', label: '高档', desc: '更看重品质体验' }
+] as const
 
 const interestsOptions = [
   { id: 'classic', icon: '📍', label: '经典必玩' },
@@ -262,7 +288,8 @@ const submit = () => {
     days: days.value,
     travelers: travelers.value,
     interests: interests.value,
-    budget: totalBudget.value,
+    budgetAmount: totalBudget.value,
+    accommodationPreference: accommodationPreference.value,
     additionalRequirements: intent.additionalRequirements
   })
   uni.navigateTo({ url: '/pages/generating/index' })
@@ -283,7 +310,7 @@ const goBack = () => {
   align-content: start;
   gap: 74rpx;
   padding: 86rpx 42rpx 88rpx;
-  background: #f4f4f6;
+  background: var(--app-bg);
 }
 
 .plan-page button {
@@ -308,7 +335,7 @@ const goBack = () => {
   justify-content: flex-start;
   width: 88rpx;
   height: 76rpx;
-  color: #050505;
+  color: var(--text-strong);
   background: transparent;
   font-size: 84rpx;
   font-weight: 320;
@@ -325,7 +352,7 @@ const goBack = () => {
 
 .section-title {
   display: block;
-  color: #050505;
+  color: var(--text-strong);
   font-size: 46rpx;
   font-weight: 950;
   line-height: 1.08;
@@ -339,7 +366,7 @@ const goBack = () => {
 }
 
 .section-note {
-  color: #8c93a0;
+  color: var(--text-muted);
   font-size: 24rpx;
   font-weight: 700;
 }
@@ -349,7 +376,7 @@ const goBack = () => {
   min-height: 120rpx;
   padding: 24rpx 34rpx;
   border-radius: 48rpx;
-  background: #ffffff;
+  background: var(--surface);
   box-shadow: 0 20rpx 52rpx rgba(60, 82, 108, 0.08);
   display: flex;
   align-items: center;
@@ -374,13 +401,13 @@ const goBack = () => {
   flex: 1;
   min-width: 0;
   height: 66rpx;
-  color: #050505;
+  color: var(--text-strong);
   font-size: 36rpx;
   font-weight: 850;
 }
 
 .destination-placeholder {
-  color: #b9c1cc;
+  color: var(--text-muted);
   font-weight: 850;
 }
 
@@ -393,7 +420,7 @@ const goBack = () => {
   min-height: 124rpx;
   padding: 0 24rpx;
   border-radius: 999rpx;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .date-range-card picker {
@@ -414,7 +441,7 @@ const goBack = () => {
 
 .date-icon {
   flex: 0 0 auto;
-  color: #050505;
+  color: var(--text-strong);
   font-size: 40rpx;
   font-weight: 900;
   line-height: 1;
@@ -426,7 +453,7 @@ const goBack = () => {
 }
 
 .date-cell__label {
-  color: #b7c0cc;
+  color: var(--text-muted);
   font-size: 24rpx;
   font-weight: 900;
   line-height: 1.1;
@@ -434,7 +461,7 @@ const goBack = () => {
 
 .date-cell__value {
   margin-top: 10rpx;
-  color: #050505;
+  color: var(--text-strong);
   font-size: 30rpx;
   font-weight: 950;
 }
@@ -453,14 +480,14 @@ const goBack = () => {
 }
 
 .time-cell__label {
-  color: #b7c0cc;
+  color: var(--text-muted);
   font-size: 22rpx;
   font-weight: 900;
   line-height: 1.1;
 }
 
 .time-cell__value {
-  color: #050505;
+  color: var(--text-strong);
   font-size: 28rpx;
   font-weight: 950;
   line-height: 1;
@@ -468,7 +495,7 @@ const goBack = () => {
 
 .chevron {
   flex: 0 0 auto;
-  color: #d5dae2;
+  color: var(--line);
   font-size: 48rpx;
   font-weight: 500;
 }
@@ -478,7 +505,7 @@ const goBack = () => {
   gap: 0;
   padding: 4rpx 30rpx;
   border-radius: 34rpx;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .setting-line {
@@ -487,11 +514,19 @@ const goBack = () => {
   justify-content: space-between;
   gap: 24rpx;
   min-height: 112rpx;
-  border-bottom: 1rpx solid #ededf0;
+  border-bottom: 1rpx solid var(--line);
 }
 
 .setting-line:last-child {
   border-bottom: 0;
+}
+
+.setting-line--stack {
+  display: grid;
+  align-items: stretch;
+  justify-content: stretch;
+  gap: 22rpx;
+  padding: 26rpx 0 30rpx;
 }
 
 .setting-line__label,
@@ -500,14 +535,14 @@ const goBack = () => {
 }
 
 .setting-line__label {
-  color: #050505;
+  color: var(--text-strong);
   font-size: 27rpx;
   font-weight: 900;
 }
 
 .setting-line__hint {
   margin-top: 8rpx;
-  color: #8c93a0;
+  color: var(--text-muted);
   font-size: 21rpx;
   line-height: 1.25;
 }
@@ -526,8 +561,8 @@ const goBack = () => {
   width: 54rpx;
   height: 54rpx;
   border-radius: 999rpx;
-  color: #050505;
-  background: #f2f3f5;
+  color: var(--text-strong);
+  background: var(--surface-soft);
   font-size: 34rpx;
   font-weight: 900;
 }
@@ -535,7 +570,7 @@ const goBack = () => {
 .stepper__value {
   min-width: 76rpx;
   text-align: center;
-  color: #050505;
+  color: var(--text-strong);
   font-size: 27rpx;
   font-weight: 900;
 }
@@ -546,7 +581,7 @@ const goBack = () => {
   align-items: center;
   justify-content: flex-end;
   gap: 8rpx;
-  color: #050505;
+  color: var(--text-strong);
   font-size: 27rpx;
   font-weight: 900;
 }
@@ -555,9 +590,60 @@ const goBack = () => {
   width: 128rpx;
   height: 62rpx;
   text-align: right;
-  color: #050505;
+  color: var(--text-strong);
   font-size: 29rpx;
   font-weight: 900;
+}
+
+.stay-levels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16rpx;
+}
+
+.stay-level {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6rpx;
+  min-width: 0;
+  min-height: 108rpx;
+  padding: 16rpx 12rpx;
+  border: 2rpx solid var(--line);
+  border-radius: 26rpx;
+  color: var(--text-strong);
+  background: var(--surface);
+  text-align: center;
+  box-shadow: 0 4rpx 10rpx rgba(5, 5, 5, 0.03);
+}
+
+.stay-level.active {
+  border-color: var(--text-strong);
+  color: #ffffff;
+  background: var(--text-strong);
+  box-shadow: none;
+}
+
+.stay-level__label,
+.stay-level__desc {
+  display: block;
+  color: inherit;
+}
+
+.stay-level__label {
+  font-size: 27rpx;
+  font-weight: 900;
+  line-height: 1.18;
+  white-space: nowrap;
+}
+
+.stay-level__desc {
+  font-size: 21rpx;
+  line-height: 1.28;
+  opacity: 0.82;
+  white-space: normal;
+  word-break: break-all;
 }
 
 .preference-grid {
@@ -574,17 +660,17 @@ const goBack = () => {
   min-width: 0;
   min-height: 80rpx;
   padding: 0 10rpx;
-  border: 2rpx solid #e9e9ec;
+  border: 2rpx solid var(--line);
   border-radius: 999rpx;
-  color: #050505;
-  background: #ffffff;
+  color: var(--text-strong);
+  background: var(--surface);
   box-shadow: 0 4rpx 10rpx rgba(5, 5, 5, 0.03);
 }
 
 .preference-chip.active {
-  border-color: #050505;
+  border-color: var(--text-strong);
   color: #ffffff;
-  background: #050505;
+  background: var(--text-strong);
   box-shadow: none;
 }
 
@@ -612,7 +698,7 @@ const goBack = () => {
   gap: 20rpx;
   padding: 26rpx 30rpx;
   border-radius: 30rpx;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .recent-plan__label,
@@ -621,20 +707,20 @@ const goBack = () => {
 }
 
 .recent-plan__label {
-  color: #8c93a0;
+  color: var(--text-muted);
   font-size: 22rpx;
   font-weight: 800;
 }
 
 .recent-plan__title {
   margin-top: 10rpx;
-  color: #050505;
+  color: var(--text-strong);
   font-size: 30rpx;
   font-weight: 950;
 }
 
 .recent-plan__arrow {
-  color: #b7bec8;
+  color: var(--text-muted);
   font-size: 48rpx;
 }
 
@@ -654,7 +740,7 @@ const goBack = () => {
   padding: 0 24rpx;
   border-radius: 999rpx;
   color: #ffffff;
-  background: #050505;
+  background: var(--text-strong);
   box-shadow: none;
   font-size: 30rpx;
   font-weight: 900;
@@ -663,7 +749,7 @@ const goBack = () => {
 
 .plan-button[disabled] {
   color: #ffffff;
-  background: #050505;
+  background: var(--text-strong);
   box-shadow: none;
 }
 </style>

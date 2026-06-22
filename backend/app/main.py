@@ -5,7 +5,9 @@ from fastapi.staticfiles import StaticFiles
 import logging
 import uuid
 import os
-from app.api.trip import router as trip_router
+from app.api.map_routes import router as map_routes_router
+from app.api.trip_planning import router as trip_planning_router
+from app.api.trip_plans import router as trip_plans_router
 from app.api.auth import router as auth_router
 from app.api.users import router as users_router
 from app.api.admin import router as admin_router
@@ -55,7 +57,9 @@ if os.path.exists(settings.UPLOAD_DIR):
     app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 # 注册路由
-app.include_router(trip_router, prefix="/api/trip", tags=["trip"])
+app.include_router(trip_planning_router, prefix="/api/trip", tags=["trip-planning"])
+app.include_router(trip_plans_router, prefix="/api/trip", tags=["trip-plans"])
+app.include_router(map_routes_router, prefix="/api/trip", tags=["map-routes"])
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(users_router, prefix="/api/users", tags=["users"])
 app.include_router(admin_router, prefix="/api/admin", tags=["admin"])
@@ -71,7 +75,7 @@ def root():
         "app": settings.APP_NAME,
         "version": settings.APP_VERSION,
         "docs": "/api/docs",
-        "health": "/api/trip/health"
+        "health": "/api/health"
     }
 
 @app.get("/api/health")

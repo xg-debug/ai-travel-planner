@@ -14,18 +14,15 @@ import type {
 } from '@/types/trip'
 import { addDays } from '@/utils/format'
 
-export const mapBudgetLevel = (budget: number, days: number, travelers: number): string => {
-  const perPersonPerDay = budget / Math.max(days, 1) / Math.max(travelers, 1)
-  if (perPersonPerDay < 400) return '经济'
-  if (perPersonPerDay < 1000) return '中等'
-  return '豪华'
-}
-
 export const convertTripResponse = (response: TripResponse, request: TripRequest): Trip => {
   const dailyBudgets = response.daily_budgets || response.estimated_budget?.daily_budgets || []
-  const days = convertItineraryToDays(response.itinerary || [], request, response.pois || {}, response.hotels || [], dailyBudgets)
   const weather = convertWeatherToForecast(response.weather)
   const hotels = convertHotels(response.hotels)
+  const primaryHotel = hotels[0]
+  const days = alignDaysToPrimaryHotel(
+    convertItineraryToDays(response.itinerary || [], request, response.pois || {}, response.hotels || [], dailyBudgets),
+    primaryHotel
+  )
   return {
     id: `trip_${Date.now()}`,
     departureCity: request.departureCity,
@@ -34,8 +31,9 @@ export const convertTripResponse = (response: TripResponse, request: TripRequest
     endDate: request.endDate || addDays(request.startDate, request.days - 1),
     travelers: request.travelers,
     interests: request.interests,
+    accommodationPreference: request.accommodationPreference,
     budget: {
-      total: response.estimated_budget?.total || request.budget,
+      total: response.estimated_budget?.total || request.budgetAmount,
       currency: response.estimated_budget?.currency || 'CNY',
       categories: convertBudgetBreakdown(response.estimated_budget?.breakdown)
     },
@@ -147,6 +145,10 @@ const convertRecommendations = (recommendations: any[], poiMap: Record<string, a
         description: detail.description || buildRecommendationDescription(name, rec, itemIndex),
         priceRange: mapPriceRange(detail.price || detail.price_range || rec.price_range),
         ...(priceText ? { priceText } : {}),
+        avgCost: Number(detail.avg_cost ?? detail.avgCost) || undefined,
+        priceSource: String(detail.price_source ?? detail.priceSource ?? '').trim(),
+        priceConfidence: String(detail.price_confidence ?? detail.priceConfidence ?? '').trim(),
+        priceNote: String(detail.price_note ?? detail.priceNote ?? '').trim(),
         address: detail.address || '',
         openingHours: detail.opening_hours || detail.openingHours || rec.best_time || '09:00-17:00',
         images: normalizeImageList(detail)
@@ -157,23 +159,56 @@ const convertRecommendations = (recommendations: any[], poiMap: Record<string, a
 
 const convertHotels = (hotels: any[] | undefined): POI[] => {
   if (!Array.isArray(hotels)) return []
-  return hotels.map((hotel, index) => ({
-    id: hotel.id || `hotel_${index + 1}`,
-    name: hotel.name || `酒店 ${index + 1}`,
-    type: 'hotel',
-    category: 'hotel',
-    location: {
-      lat: Number(hotel.coordinates?.lat ?? hotel.lat) || 0,
-      lng: Number(hotel.coordinates?.lng ?? hotel.lng ?? hotel.lon) || 0
-    },
-    rating: normalizePoiRating(hotel, index, 'hotel'),
-    description: hotel.description || `${hotel.name || '该酒店'}适合作为本次路线的住宿落点。`,
-    priceRange: mapPriceRange(hotel.price),
-    priceText: normalizePriceText(hotel.price, 'hotel'),
+  return hotels
+    .map((hotel, index) => ({
+      id: hotel.id || `hotel_${index + 1}`,
+      name: hotel.name || `酒店 ${index + 1}`,
+      type: 'hotel' as const,
+      category: 'hotel',
+      location: {
+        lat: Number(hotel.coordinates?.lat ?? hotel.lat) || 0,
+        lng: Number(hotel.coordinates?.lng ?? hotel.lng ?? hotel.lon) || 0
+      },
+      rating: normalizePoiRating(hotel, index, 'hotel'),
+      description: normalizeHotelDescription(hotel),
+      priceRange: mapPriceRange(hotel.price),
+      priceText: normalizeHotelPriceText(hotel),
+      priceConfidence: 'reference',
+      priceNote: '酒店价格为行程规划参考，实时价格会随日期、库存和平台活动变化。',
+      referencePriceRange: String(hotel.reference_price_range ?? hotel.referencePriceRange ?? '').trim(),
+      budgetPricePerRoom: Number(hotel.budget_price_per_room ?? hotel.budgetPricePerRoom) || undefined,
+      address: hotel.address || '',
+      openingHours: hotel.opening_hours || '全天',
+      images: normalizeImageList(hotel)
+    }))
+    .sort((left, right) => hotelRankScore(right) - hotelRankScore(left))
+}
+
+const normalizeHotelDescription = (hotel: any): string => {
+  const reason = String(hotel.reason || hotel.description || '').trim()
+  if (reason) return reason
+  return `${hotel.name || '该酒店'}适合作为本次路线的住宿落点。`
+}
+
+const hotelRankScore = (hotel: POI): number => {
+  const price = parseNumericPrice(hotel.priceText) || 0
+  const priceScore = price > 0 && price < 180 ? -30 : 0
+  return Number(hotel.rating || 0) * 10 + priceScore
+}
+
+const alignDaysToPrimaryHotel = (days: TripDay[], hotel?: POI): TripDay[] => {
+  if (!hotel) return days
+  const recommendation: HotelRecommendation = {
+    name: hotel.name,
     address: hotel.address || '',
-    openingHours: hotel.opening_hours || '全天',
-    images: normalizeImageList(hotel)
-  }))
+    priceEstimate: hotel.priceText || '',
+    referencePriceRange: hotel.referencePriceRange || '',
+    budgetPricePerRoom: hotel.budgetPricePerRoom,
+    reason: hotel.description || `${hotel.name}适合作为本次路线的住宿落点。`,
+    rating: hotel.rating,
+    coordinates: hotel.location?.lat && hotel.location?.lng ? { lat: hotel.location.lat, lng: hotel.location.lng } : undefined
+  }
+  return days.map((day) => ({ ...day, hotel: recommendation }))
 }
 
 const normalizeDayHotel = (hotel: any, hotelOptions: any[] = [], activities: Activity[] = []): HotelRecommendation | undefined => {
@@ -186,7 +221,9 @@ const normalizeDayHotel = (hotel: any, hotelOptions: any[] = [], activities: Act
   return {
     name,
     address: source.address || '',
-    priceEstimate: typeof priceEstimate === 'number' ? priceEstimate : normalizePriceText(priceEstimate, 'hotel'),
+    priceEstimate: normalizeHotelPriceText(source) || (typeof priceEstimate === 'number' ? priceEstimate : normalizePriceText(priceEstimate, 'hotel')),
+    referencePriceRange: String(source.reference_price_range ?? source.referencePriceRange ?? '').trim(),
+    budgetPricePerRoom: Number(source.budget_price_per_room ?? source.budgetPricePerRoom) || undefined,
     reason: source.reason || source.description || `${name}适合作为这次行程的住宿落点。`,
     rating: Number(source.rating) || undefined,
     coordinates: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : undefined
@@ -366,6 +403,14 @@ const normalizeActivity = (
   const normalizedTransportOptions: TransportOption[] = transportOptions.length
     ? transportOptions
     : ([bestTransportOption, ...transportAlternatives].filter(Boolean) as TransportOption[])
+  const openingHours = String(activity.opening_hours ?? activity.openingHours ?? poi?.opening_hours ?? poi?.openingHours ?? '').trim()
+  const priceNote = String(activity.price_note ?? activity.priceNote ?? poi?.price_note ?? poi?.priceNote ?? '').trim()
+  const notes = [
+    activity.tips || poi?.tips,
+    openingHours ? `营业/开放时间：${openingHours}` : '',
+    priceNote,
+    activity.transportation
+  ].filter(Boolean).join(' · ')
   return {
     id: activity.id || `act_${dayIndex + 1}_${activityIndex + 1}`,
     time,
@@ -377,7 +422,9 @@ const normalizeActivity = (
     cost: Number(activity.cost ?? activity.cost_estimate ?? activity.total_cost ?? activity.totalCost ?? 0) || 0,
     ticketPrice,
     ticketLabel: buildTicketLabel(activity, poi, ticketPrice),
-    notes: activity.tips || poi?.tips || activity.transportation,
+    openingHours,
+    priceNote,
+    notes,
     reason: activity.reason || activity.recommendation_reason || '',
     score: Number(activity.score) || undefined,
     scoreFactors: activity.score_factors || activity.scoreFactors,
@@ -412,10 +459,10 @@ const normalizeActivityTitle = (title: string, type: Activity['type'], time: str
     : hour < 14
       ? '午餐'
       : hour < 17
-        ? '下午茶'
+        ? '餐饮'
         : '晚餐'
   const cleaned = String(title || location)
-    .replace(/^(早餐|早茶|早午茶|午餐|午饭|下午茶|晚餐|晚饭|夜宵)[：:\s-]*/, '')
+    .replace(/^(早餐|早茶|早午茶|午餐|午饭|下午茶|茶歇|晚餐|晚饭|夜宵)[：:\s-]*/, '')
     .trim()
   const mealTitle = looksLikeTransportTitle(cleaned) ? location : cleaned
   return `${label}：${mealTitle || location || '餐饮安排'}`
@@ -516,7 +563,7 @@ const mapActivityType = (rawType: string | undefined): Activity['type'] => {
 const mapRecommendationTypeToPoiType = (rawType: unknown): POI['type'] => {
   const value = String(rawType || '').toLowerCase()
   if (value.includes('美食') || value.includes('餐')) return 'restaurant'
-  if (value.includes('酒店') || value.includes('住宿')) return 'hotel'
+  if (value.includes('酒店') || value.includes('住宿') || value.includes('hotel')) return 'hotel'
   if (value.includes('博物')) return 'museum'
   if (value.includes('公园') || value.includes('自然')) return 'park'
   if (value.includes('购物')) return 'shop'
@@ -555,6 +602,15 @@ const normalizePriceText = (value: unknown, context?: PriceContext): string => {
   if (text.startsWith('¥') || text.startsWith('￥')) return unit ? `${text}${unit}` : text
   if (/^\d+(\.\d+)?$/.test(text)) return `¥${formatNumericPrice(Number(text), context)}${unit}`
   return text
+}
+
+const normalizeHotelPriceText = (source: any): string => {
+  const raw = String(source?.price_estimate ?? source?.priceEstimate ?? source?.price ?? '').trim()
+  if (!raw || /待查|待查询|实时/.test(raw)) return '实时价待查'
+  if (source?.price_is_estimated || source?.priceIsEstimated || source?.price_confidence === 'reference_only') {
+    return /参考|约|估算/.test(raw) ? raw : `参考 ${normalizePriceText(raw, 'hotel')}`
+  }
+  return normalizePriceText(raw, 'hotel')
 }
 
 const normalizeOptionalPriceText = (value: unknown, context?: PriceContext): string | undefined => {

@@ -11,36 +11,43 @@ from app.core.database import SessionLocal
 from app.models.admin import RuntimeSetting
 
 
+DEEPSEEK_FIXED_MODEL = "deepseek-v4-flash"
+
 LLM_PROVIDERS = {
     "openai": {
         "label": "OpenAI",
         "api_key_setting": "llm.openai.api_key",
         "env_attr": "OPENAI_API_KEY",
-        "default_model": "gpt-4o-mini",
+        "default_model": settings.PROVIDER_DEFAULT_MODELS.get("openai", "gpt-4o-mini"),
     },
     "anthropic": {
         "label": "Anthropic",
         "api_key_setting": "llm.anthropic.api_key",
         "env_attr": "ANTHROPIC_API_KEY",
-        "default_model": "claude-3-5-sonnet-20241022",
+        "default_model": settings.PROVIDER_DEFAULT_MODELS.get("anthropic", "claude-sonnet-4-6"),
     },
     "google": {
         "label": "Google Gemini",
         "api_key_setting": "llm.google.api_key",
         "env_attr": "GOOGLE_API_KEY",
-        "default_model": "gemini-1.5-flash",
+        "default_model": settings.PROVIDER_DEFAULT_MODELS.get("google", "gemini-2.5-flash"),
     },
     "deepseek": {
         "label": "DeepSeek",
         "api_key_setting": "llm.deepseek.api_key",
         "env_attr": "DEEPSEEK_API_KEY",
-        "default_model": "deepseek-chat",
+        "default_model": DEEPSEEK_FIXED_MODEL,
     },
 }
 
 MAP_PROVIDERS = {
+    "amap_mcp_sse": {
+        "label": "高德地图 MCP SSE",
+        "api_key_setting": "map.amap_mcp.api_key",
+        "env_attr": "AMAP_MCP_API_KEY",
+    },
     "amap": {
-        "label": "高德地图",
+        "label": "高德地图 REST",
         "api_key_setting": "map.amap.api_key",
         "env_attr": "AMAP_API_KEY",
     },
@@ -77,6 +84,8 @@ def is_present_secret(value: str | None) -> bool:
         "your_deepseek_key",
         "your_amap_api_key_here",
         "your_amap_key",
+        "your_amap_mcp_api_key_here",
+        "your_amap_mcp_key",
         "your_tencent_map_api_key_here",
         "your_tencent_map_key",
     )
@@ -124,18 +133,27 @@ def set_setting_value(db: Session, key: str, value: str, updated_by: str | None 
 
 def get_llm_provider(db: Session | None = None) -> str:
     provider = get_setting_value(db, "llm.provider") if db else get_runtime_setting("llm.provider")
-    provider = (provider or settings.DEFAULT_LLM_PROVIDER or "openai").strip().lower()
+    provider = (provider or settings.DEFAULT_LLM_PROVIDER or "deepseek").strip().lower()
     return provider if provider in LLM_PROVIDERS else "openai"
+
+
+def normalize_llm_model(provider: str, model: str | None = None) -> str:
+    if provider == "deepseek":
+        return DEEPSEEK_FIXED_MODEL
+    model = (model or "").strip()
+    if model:
+        return model
+    return LLM_PROVIDERS.get(provider, LLM_PROVIDERS["openai"])["default_model"]
 
 
 def get_llm_model(provider: str | None = None, db: Session | None = None) -> str:
     current_provider = provider or get_llm_provider(db)
     model = get_setting_value(db, "llm.model") if db else get_runtime_setting("llm.model")
     if model and model.strip():
-        return model.strip()
+        return normalize_llm_model(current_provider, model)
     if current_provider == settings.DEFAULT_LLM_PROVIDER and settings.DEFAULT_LLM_MODEL:
-        return settings.DEFAULT_LLM_MODEL
-    return LLM_PROVIDERS.get(current_provider, LLM_PROVIDERS["openai"])["default_model"]
+        return normalize_llm_model(current_provider, settings.DEFAULT_LLM_MODEL)
+    return normalize_llm_model(current_provider)
 
 
 def get_llm_api_key(provider: str, db: Session | None = None) -> str | None:
@@ -148,7 +166,8 @@ def get_llm_api_key(provider: str, db: Session | None = None) -> str | None:
 
 def get_map_provider(db: Session | None = None) -> str:
     provider = get_setting_value(db, "map.provider") if db else get_runtime_setting("map.provider")
-    provider = (provider or "amap").strip().lower()
+    default_provider = settings.MAP_PROVIDER or ("amap_mcp_sse" if settings.AMAP_MCP_SSE_URL else "amap")
+    provider = (provider or default_provider).strip().lower()
     return provider if provider in MAP_PROVIDERS else "amap"
 
 
@@ -160,7 +179,12 @@ def get_map_api_key(provider: str, db: Session | None = None) -> str | None:
     return configured or getattr(settings, meta["env_attr"], None)
 
 
-def build_agent_config_snapshot(db: Session) -> Dict[str, object]:
+def get_amap_mcp_sse_url(db: Session | None = None) -> str | None:
+    configured = get_setting_value(db, "map.amap_mcp.sse_url") if db else get_runtime_setting("map.amap_mcp.sse_url")
+    return configured or settings.AMAP_MCP_SSE_URL
+
+
+def build_runtime_config_snapshot(db: Session) -> Dict[str, object]:
     llm_provider = get_llm_provider(db)
     llm_model = get_llm_model(llm_provider, db)
     map_provider = get_map_provider(db)
@@ -190,6 +214,7 @@ def build_agent_config_snapshot(db: Session) -> Dict[str, object]:
                     "label": meta["label"],
                     "hasKey": is_present_secret(get_map_api_key(provider_id, db)),
                     "maskedKey": mask_secret(get_map_api_key(provider_id, db)),
+                    "hasSseUrl": bool(get_amap_mcp_sse_url(db)) if provider_id == "amap_mcp_sse" else None,
                 }
                 for provider_id, meta in MAP_PROVIDERS.items()
             ],

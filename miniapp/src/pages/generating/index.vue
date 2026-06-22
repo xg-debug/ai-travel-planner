@@ -44,10 +44,10 @@
     </view>
 
     <view v-if="tripStore.error" class="error panel">
-      <text class="error__title">生成失败</text>
+      <text class="error__title">{{ errorTitle }}</text>
       <text class="error__desc">{{ tripStore.error }}</text>
-      <button class="primary-button" @tap="startGenerate">重新生成</button>
-      <button class="secondary-button error__back" @tap="backToPlan">返回修改需求</button>
+      <button v-if="tripStore.errorRetryable" class="primary-button" @tap="startGenerate">重新生成</button>
+      <button class="secondary-button error__back" @tap="backToPlan">{{ tripStore.errorRetryable ? '返回修改需求' : '返回需求页' }}</button>
     </view>
   </view>
 </template>
@@ -63,6 +63,7 @@ const tripStore = useTripStore()
 const themeStore = useThemeStore()
 const { draft } = storeToRefs(tripStore)
 const activeText = computed(() => tripStore.activeStepLabel)
+const errorTitle = computed(() => tripStore.errorRetryable ? '生成失败' : '服务配置待处理')
 const activeStepNumber = computed(() => Math.min(tripStore.activeStepIndex + 1, tripStore.steps.length))
 const progressPercent = computed(() => {
   const total = Math.max(tripStore.steps.length, 1)
