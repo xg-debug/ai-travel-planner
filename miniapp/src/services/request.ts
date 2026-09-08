@@ -70,7 +70,12 @@ export function request<T>(options: RequestOptions): Promise<T> {
       },
       fail: (err) => {
         const detail = String((err as any)?.errMsg || '').trim()
-        reject(new Error(detail ? `网络连接异常：${detail}` : '网络连接异常，请检查网络后重试'))
+        const localHint = getBaseUrl().includes('localhost') || getBaseUrl().includes('127.0.0.1')
+          ? '；真机不能使用 localhost，请在 miniapp/.env 中配置电脑局域网 IP'
+          : ''
+        reject(new Error(detail
+          ? `无法连接后端：${detail}${localHint}`
+          : `无法连接后端，请确认服务已启动${localHint}`))
       }
     })
   })

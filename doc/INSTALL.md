@@ -111,13 +111,14 @@ GOOGLE_API_KEY=xxxxxxxx             # Google Gemini
 DEFAULT_LLM_PROVIDER=deepseek
 DEFAULT_LLM_MODEL=deepseek-v4-flash
 
-# 地图服务（推荐使用高德 MCP SSE，不再由后端直接调用高德 REST API）
-MAP_PROVIDER=amap_mcp_sse
-AMAP_MCP_SSE_URL=https://xxxxxxxx   # 高德开放平台 MCP Server SSE URL
-AMAP_MCP_API_KEY=xxxxxxxx           # 如高德 MCP URL 或网关要求鉴权则配置
+# 地图服务（POI、天气等使用高德官方 MCP Streamable HTTP）
+MAP_PROVIDER=amap_mcp
+AMAP_MCP_URL=https://mcp.amap.com/mcp # 高德官方 MCP HTTP 入口
+AMAP_MCP_API_KEY=xxxxxxxx           # 高德 MCP Key，兼容原 AMAP_API_KEY
+AMAP_ROAD_GEOMETRY_ENABLED=false   # 可选：允许使用高德 Web 服务补充真实道路折线
 
 # 备用地图服务
-AMAP_API_KEY=xxxxxxxx               # 高德 REST Key，仅 MAP_PROVIDER=amap 时使用
+AMAP_API_KEY=xxxxxxxx               # 原高德 Key，兼容用于 MCP 鉴权
 TENCENT_MAP_API_KEY=xxxxxxxx        # 腾讯地图，仅 MAP_PROVIDER=tencent 时使用
 
 # 安全
@@ -147,13 +148,11 @@ UNSPLASH_SECRET_KEY=xxxxxxxx
 | `LLM_MAX_TOKENS`                          | `4000`                          | LLM 最大输出 Token      |
 | `LLM_REQUEST_TIMEOUT_SECONDS`             | `45`                            | LLM 请求超时（秒）         |
 | `LLM_MAX_RETRIES`                         | `1`                             | LLM 调用最大重试次数        |
-| `MAP_PROVIDER`                            | `amap_mcp_sse`/`amap`           | 地图能力提供者，推荐 `amap_mcp_sse` |
-| `AMAP_MCP_SSE_URL`                        | —                               | 高德 MCP Server SSE 入口 URL |
-| `AMAP_MCP_SSE_MESSAGE_URL`                | —                               | MCP message POST 地址，通常由 SSE endpoint 事件自动下发 |
+| `MAP_PROVIDER` | `amap_mcp` | 默认高德 MCP，兼容旧 amap / amap_mcp_sse；也可手动选择 tencent |
+| `AMAP_MCP_URL` | `https://mcp.amap.com/mcp` | 高德官方 Streamable HTTP 地址 |
 | `AMAP_MCP_API_KEY`                        | —                               | 高德 MCP 鉴权 Key，如服务 URL 已带 Key 可不填 |
 | `AMAP_MCP_HEADERS`                        | —                               | 额外请求头 JSON，例如 `{"x-api-key":"..."}` |
-| `AMAP_MCP_TOOL_OVERRIDES`                 | —                               | 高德 MCP 工具名覆盖 JSON，用于适配官方工具名变化 |
-| `AMAP_API_KEY`                            | —                               | 高德地图 REST Key，仅备用 REST provider 使用 |
+| `AMAP_API_KEY` | — | 兼容已有高德 Key，调用仍通过 MCP |
 | `TENCENT_MAP_API_KEY`                     | —                               | 腾讯地图 Key            |
 | `WEATHER_API_KEY`                         | —                               | 天气服务 Key            |
 | `MAX_TRIP_DAYS`                           | `7`                             | 单次行程最大天数            |

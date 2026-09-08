@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, List, Sequence
 from app.trip_planning.utils import compact_name, dedupe
 
 
-REAL_DATA_SOURCES = {"geo", "amap", "amap_mcp_sse", "tencent", "unsplash", "llm_hotel"}
+REAL_DATA_SOURCES = {"geo", "amap", "amap_mcp_sse", "amap_mcp", "tencent", "unsplash", "llm_hotel"}
 
 PREFERENCE_ALIASES = {
     "文化": "culture",

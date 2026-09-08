@@ -85,17 +85,6 @@ const createPlanningError = (payload: any, fallback = '行程规划失败，请�
   return error
 }
 
-const isNonRetryablePlanningError = (error: unknown) => {
-  const item = error as PlanningError
-  if (item?.retryable === false) return true
-  const text = String(item?.message || error || '').toLowerCase()
-  return text.includes('余额不足')
-    || text.includes('insufficient balance')
-    || text.includes('api key')
-    || text.includes('密钥')
-    || text.includes('未配置')
-}
-
 export const tripApi = {
   register(email: string, password: string, name?: string, rememberMe = true) {
     return request<AuthResponse>({
@@ -257,22 +246,16 @@ export const tripApi = {
   },
 
   async planTripRealtime(payload: PlanTripRequest, onProgress?: (event: PlanProgressEvent) => void) {
-    try {
-      return await this.planTripWithSse(payload, onProgress)
-    } catch (error) {
-      if (isNonRetryablePlanningError(error)) {
-        throw error
-      }
-      console.warn('Planning SSE unavailable, fallback to job polling:', error)
-      return this.planTripWithPolling(payload, (job) => {
-        onProgress?.({
-          step: job.step,
-          message: job.message,
-          progress: job.progress,
-          partial_result: job.partial_result
-        })
+    // Keep one durable backend job per user action. Falling back from an SSE
+    // POST would otherwise create a second agent run after a connection drop.
+    return this.planTripWithPolling(payload, (job) => {
+      onProgress?.({
+        step: job.step,
+        message: job.message,
+        progress: job.progress,
+        partial_result: job.partial_result
       })
-    }
+    })
   },
 
   listTripPlans() {
@@ -306,12 +289,21 @@ export const tripApi = {
     })
   },
 
+  nearbyPlaces(point: any) {
+    return request<any>({ url: '/trip/map/around', method: 'POST', data: { point, keyword: '餐厅', radius: 1500 }, timeout: 65000 })
+  },
+  poiDetail(id: string) {
+    return request<any>({ url: `/trip/map/pois/${encodeURIComponent(id)}`, method: 'GET', timeout: 65000 })
+  },
+  exportMap(payload: any) {
+    return request<{ url: string }>({ url: '/trip/map/export', method: 'POST', data: payload, timeout: 65000 })
+  },
   planMapRoutes(payload: any) {
     return request<any>({
       url: '/trip/route/map',
       method: 'POST',
       data: payload,
-      timeout: 60000
+      timeout: 180000
     })
   }
 }

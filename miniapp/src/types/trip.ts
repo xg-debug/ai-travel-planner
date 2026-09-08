@@ -34,6 +34,7 @@ export interface TransportOption {
 }
 
 export interface Activity {
+  source_id?: string
   id: string
   time: string
   title: string
@@ -77,6 +78,7 @@ export interface HotelRecommendation {
   budgetPricePerRoom?: number
   reason?: string
   rating?: number
+  image?: string
   coordinates?: {
     lat: number
     lng: number
@@ -208,6 +210,7 @@ export interface BudgetBreakdown {
 }
 
 export interface Trip {
+  planningWarnings?: string[]
   id: string
   departureCity?: string
   destination: string
@@ -233,6 +236,7 @@ export interface Trip {
 }
 
 export interface TripResponse {
+  planning_warnings?: string[]
   plan: string
   pois: Record<string, any>
   itinerary: any[]

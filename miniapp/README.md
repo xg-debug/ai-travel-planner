@@ -1,6 +1,6 @@
 # AI Travel Planner Miniapp
 
-这是 AI Travel Planner 的微信小程序展示层。旧 Web 展示端已删除，当前用户端以小程序为主，管理配置使用 `admin/`。
+这是 AI Travel Planner 的微信小程序展示层，与 `frontend/` Web 端共用同一套旅行规划接口和视觉语言。
 
 ## 技术栈
 
@@ -33,7 +33,16 @@ miniapp/
 VITE_API_BASE_URL=http://localhost:8000/api
 ```
 
+`localhost` 只适用于微信开发者工具。真机中的 `localhost` 指手机本身，真机调试请改成电脑局域网 IP（例如 `http://192.168.1.10:8000/api`）；正式发布必须使用已加入微信 request 合法域名的 HTTPS 地址。
+
 线上微信小程序必须使用 HTTPS 后端域名，并在微信公众平台配置 request 合法域名。
+
+景点、餐饮和酒店实景图来自地图 POI 数据。若微信管理后台启用了图片域名校验，还需要把下面两个 HTTPS 域名加入图片/downloadFile 合法域名：
+
+- `https://store.is.autonavi.com`
+- `https://aos-comment.amap.com`
+
+第三方图片不可用时，小程序会自动使用 `src/static/recommendations/` 中的本地旅行主题图。
 
 ## 常用命令
 

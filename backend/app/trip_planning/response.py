@@ -7,6 +7,7 @@ from app.trip_planning.recommendations import dedupe_recommendations
 def build_trip_response(result: Dict[str, Any]) -> TripResponse:
     return TripResponse(
         plan=result.get("final_output", ""),
+        planning_warnings=result.get("planning_warnings") or [],
         pois=result.get("poi_data", {}),
         itinerary=result.get("plan"),
         weather=result.get("weather_data"),

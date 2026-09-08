@@ -49,6 +49,7 @@ def build_planner_prompt(state: Dict[str, Any]) -> str:
 
 要求：
 - search_attractions 查询词要体现用户偏好，并覆盖经典、城市特色、自然/街区/夜间等差异化方向。
+- 先搜索景点和酒店，再 search_foods；系统会按景点与酒店坐标搜索周边餐厅。
 - search_foods 查询词要避开大学食堂、单位食堂、内部餐厅，优先本地特色、老字号、街区餐厅。
 - 不要输出 Markdown，不要解释。"""
 

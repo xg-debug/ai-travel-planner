@@ -49,6 +49,7 @@ export const convertTripResponse = (response: TripResponse, request: TripRequest
       ...hotels
     ],
     plan: response.plan,
+    planningWarnings: response.planning_warnings || [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     status: 'planned'
@@ -206,6 +207,7 @@ const alignDaysToPrimaryHotel = (days: TripDay[], hotel?: POI): TripDay[] => {
     budgetPricePerRoom: hotel.budgetPricePerRoom,
     reason: hotel.description || `${hotel.name}适合作为本次路线的住宿落点。`,
     rating: hotel.rating,
+    image: normalizeImageList(hotel)[0],
     coordinates: hotel.location?.lat && hotel.location?.lng ? { lat: hotel.location.lat, lng: hotel.location.lng } : undefined
   }
   return days.map((day) => ({ ...day, hotel: recommendation }))
@@ -226,6 +228,7 @@ const normalizeDayHotel = (hotel: any, hotelOptions: any[] = [], activities: Act
     budgetPricePerRoom: Number(source.budget_price_per_room ?? source.budgetPricePerRoom) || undefined,
     reason: source.reason || source.description || `${name}适合作为这次行程的住宿落点。`,
     rating: Number(source.rating) || undefined,
+    image: normalizeImageList(source)[0],
     coordinates: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : undefined
   }
 }
@@ -428,7 +431,11 @@ const normalizeActivity = (
     reason: activity.reason || activity.recommendation_reason || '',
     score: Number(activity.score) || undefined,
     scoreFactors: activity.score_factors || activity.scoreFactors,
-    image: activity.image || activity.image_url || poi?.image_url,
+    image: normalizeImageList({
+      image: activity.image || activity.image_url,
+      images: poi ? normalizeImageList(poi) : []
+    })[0],
+    source_id: String(activity.source_id || activity.poi_id || poi?.id || ""),
     coordinates: Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : undefined,
     isIntercityTransport,
     intercityDirection: String(activity.intercity_direction ?? activity.intercityDirection ?? ''),
@@ -533,7 +540,8 @@ const normalizeImageUrl = (value: unknown): string => {
   const url = String(value || '').trim()
   if (!url) return ''
   if (url.startsWith('//')) return `https:${url}`
-  return url
+  if (url.startsWith('http://')) return `https://${url.slice(7)}`
+  return url.startsWith('https://') || url.startsWith('/') ? url : ''
 }
 
 const normalizeTime = (time: string | undefined): string => {

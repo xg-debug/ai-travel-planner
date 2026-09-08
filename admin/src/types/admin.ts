@@ -84,6 +84,7 @@ export interface ProviderOption {
   id: string
   label: string
   defaultModel?: string
+  model?: string
   hasKey: boolean
   maskedKey?: string | null
 }

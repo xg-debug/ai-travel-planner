@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     MAP_PROVIDER: Optional[str] = os.getenv("MAP_PROVIDER")
     AMAP_API_KEY: Optional[str] = os.getenv("AMAP_API_KEY")
     TENCENT_MAP_API_KEY: Optional[str] = os.getenv("TENCENT_MAP_API_KEY")
+    AMAP_MCP_URL: str = os.getenv("AMAP_MCP_URL", "https://mcp.amap.com/mcp")
     AMAP_MCP_SSE_URL: Optional[str] = os.getenv("AMAP_MCP_SSE_URL")
     AMAP_MCP_SSE_MESSAGE_URL: Optional[str] = os.getenv("AMAP_MCP_SSE_MESSAGE_URL")
     AMAP_MCP_API_KEY: Optional[str] = os.getenv("AMAP_MCP_API_KEY")
@@ -46,6 +47,8 @@ class Settings(BaseSettings):
     AMAP_MCP_TOOL_OVERRIDES: Optional[str] = os.getenv("AMAP_MCP_TOOL_OVERRIDES")
     AMAP_MCP_CONNECT_TIMEOUT: float = float(os.getenv("AMAP_MCP_CONNECT_TIMEOUT", "20"))
     AMAP_MCP_REQUEST_TIMEOUT: float = float(os.getenv("AMAP_MCP_REQUEST_TIMEOUT", "60"))
+    AMAP_MCP_MAX_QPS: float = float(os.getenv("AMAP_MCP_MAX_QPS", "2"))
+    AMAP_ROAD_GEOMETRY_ENABLED: bool = False
     
     # 安全配置
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")

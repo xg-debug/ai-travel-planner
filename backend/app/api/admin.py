@@ -19,6 +19,8 @@ from app.services.runtime_config import (
     LLM_PROVIDERS,
     MAP_PROVIDERS,
     build_runtime_config_snapshot,
+    get_llm_model,
+    get_llm_provider,
     normalize_llm_model,
     set_setting_value,
 )
@@ -254,19 +256,13 @@ def runtime_status(
     selected_map = next(
         item for item in snapshot["map"]["providers"] if item["id"] == snapshot["map"]["provider"]
     )
+    llm_warnings = [] if selected_llm["hasKey"] else ["当前大模型供应商尚未配置 API Key"]
     return {
         **snapshot,
         "health": {
-            "llmConfigured": selected_llm["hasKey"],
+            "llmConfigured": not llm_warnings,
             "mapConfigured": selected_map["hasKey"],
-            "warnings": [
-                message
-                for message in [
-                    None if selected_llm["hasKey"] else "当前大模型供应商尚未配置 API Key",
-                    None if selected_map["hasKey"] else "当前地图供应商尚未配置 API Key",
-                ]
-                if message
-            ],
+            "warnings": llm_warnings + ([] if selected_map["hasKey"] else ["当前地图供应商尚未配置 API Key"]),
         },
     }
 
@@ -286,17 +282,14 @@ def update_settings(
     db: Session = Depends(get_db),
 ):
     if payload.llm:
-        provider = (payload.llm.provider or "").strip().lower()
-        if provider:
-            if provider not in LLM_PROVIDERS:
-                raise HTTPException(status_code=400, detail="不支持的大模型供应商")
-            set_setting_value(db, "llm.provider", provider, principal.user.id)
-        else:
-            provider = str(build_runtime_config_snapshot(db)["llm"]["provider"])
-
-        normalized_model = normalize_llm_model(provider, payload.llm.model)
+        provider = (payload.llm.provider or get_llm_provider(db)).strip().lower()
+        if provider not in LLM_PROVIDERS:
+            raise HTTPException(status_code=400, detail="不支持的大模型供应商")
+        normalized_model = normalize_llm_model(provider, payload.llm.model if payload.llm.model is not None else get_llm_model(provider, db))
+        set_setting_value(db, "llm.provider", provider, principal.user.id)
         if normalized_model:
             set_setting_value(db, "llm.model", normalized_model, principal.user.id)
+            set_setting_value(db, f"llm.{provider}.model", normalized_model, principal.user.id)
 
         if payload.llm.api_key is not None and payload.llm.api_key.strip():
             api_key_setting = LLM_PROVIDERS[provider]["api_key_setting"]
@@ -304,6 +297,8 @@ def update_settings(
 
     if payload.map:
         provider = (payload.map.provider or "").strip().lower()
+        if provider in {"amap", "amap_mcp_sse"}:
+            provider = "amap_mcp"
         if provider:
             if provider not in MAP_PROVIDERS:
                 raise HTTPException(status_code=400, detail="不支持的地图供应商")

@@ -41,7 +41,7 @@
               <a-form-item label="供应商" name="provider" :rules="[{ required: true, message: '请选择供应商' }]">
                 <a-select v-model:value="llmForm.provider" size="large" :options="llmOptions" />
               </a-form-item>
-              <a-form-item label="模型名称" name="model">
+              <a-form-item label="模型名称" name="model" >
                 <a-input
                   v-model:value="llmForm.model"
                   size="large"
@@ -49,7 +49,7 @@
                   :placeholder="llmModelPlaceholder"
                 />
               </a-form-item>
-              <a-form-item label="API Key" name="apiKey">
+              <a-form-item label="API Key" name="apiKey" extra="已配置时留空可保留原 Key。">
                 <a-input-password
                   v-model:value="llmForm.apiKey"
                   size="large"
@@ -83,7 +83,7 @@
                 class="settings-alert"
                 type="info"
                 show-icon
-                message="腾讯位置服务用于 POI 与路线；天气能力继续优先使用高德地图。"
+                message="腾讯位置服务用于 POI 与路线；天气、周边与专属地图使用高德 MCP。"
               />
               <a-button type="primary" html-type="submit" :loading="savingMap">
                 <template #icon>
@@ -174,10 +174,10 @@ const syncForms = () => {
 }
 
 watch(() => llmForm.provider, (provider) => {
-  if (provider === 'deepseek') {
-    llmForm.model = fixedDeepseekModel
-  }
-})
+  const saved = status.value?.llm.providers.find(item => item.id === provider)
+  llmForm.model = provider === 'deepseek' ? fixedDeepseekModel : saved?.model || saved?.defaultModel || ''
+  llmForm.apiKey = ''
+}, { flush: 'sync' })
 
 const fetchStatus = async () => {
   loading.value = true

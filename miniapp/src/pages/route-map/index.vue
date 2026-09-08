@@ -27,6 +27,13 @@
         <cover-view v-if="showPendingTab" class="map-tab map-tab--muted" @tap="showTodoTip">待计划</cover-view>
       </cover-view>
 
+      <cover-view class="mcp-tools">
+        <cover-view @tap="chooseMode">{{ modeNames[routeMode] }}</cover-view>
+        <cover-view @tap="showDirections">路线指引</cover-view>
+        <cover-view @tap="findNearby">附近餐饮</cover-view>
+        <cover-view @tap="verifyPlace">地点详情</cover-view>
+        <cover-view v-if="!singlePlace" @tap="exportPersonalMap">导出高德</cover-view>
+      </cover-view>
       <cover-view class="map-locate" @tap="focusCurrentRoute">⌖</cover-view>
 
       <cover-view v-if="routeWarningText" class="route-warning">{{ routeWarningText }}</cover-view>
@@ -91,6 +98,7 @@ import { dayRouteStops } from '@/utils/tripDisplay'
 
 type RoutePoint = {
   key: string
+  poiId: string
   markerId: number
   dayIndex: number
   index: number
@@ -116,6 +124,10 @@ type MapRoutePlan = {
     duration?: number
     polyline?: Array<{ latitude: number; longitude: number }>
     provider?: string
+    mode?: string
+    ok?: boolean
+    instructions?: string[]
+    polylines?: Array<Array<{ latitude: number; longitude: number }>>
     error?: string
   }>
   provider?: string
@@ -135,6 +147,12 @@ const routeColors = ['#32B7D9', '#21BFA4', '#FF6A7A', '#F59E0B', '#8B5CF6', '#0F
 const tripStore = useTripStore()
 const themeStore = useThemeStore()
 const selectedDay = ref(-1)
+const routeMode = ref('touring')
+const modeNames: Record<string, string> = { touring: '推荐交通', walking: '步行', driving: '驾车', bicycling: '骑行', transit: '公交地铁' }
+const routeLoading = ref(false)
+const routeError = ref('')
+const toolBusy = ref(false)
+let routeRequest = 0
 const selectedPointKey = ref('')
 const routePlans = ref<Record<number, MapRoutePlan>>({})
 const singlePlace = ref<SinglePlace | null>(null)
@@ -168,6 +186,7 @@ const daySegments = computed<RouteSegment[]>(() => (trip.value?.days || []).map(
       const activityIndex = day.activities.indexOf(activity)
       return {
         key: `${dayIndex}-${index}`,
+        poiId: activity.source_id || "",
         markerId: dayIndex * 1000 + index,
         dayIndex,
         index,
@@ -179,7 +198,7 @@ const daySegments = computed<RouteSegment[]>(() => (trip.value?.days || []).map(
       }
     })
     .filter(Boolean) as RoutePoint[]
-})).filter((item) => item.points.length >= 2))
+})).filter((item) => item.points.length > 0))
 
 const visibleSegments = computed(() => {
   if (singlePlace.value) return []
@@ -187,16 +206,19 @@ const visibleSegments = computed(() => {
   return daySegments.value.filter((item) => item.dayIndex === selectedDay.value)
 })
 
-const hasMapData = computed(() => Boolean(singlePlace.value || visibleSegments.value.some((item) => item.points.length >= 2)))
+const hasMapData = computed(() => Boolean(singlePlace.value || visibleSegments.value.some((item) => item.points.length > 0)))
 const showPendingTab = computed(() => daySegments.value.length <= 3)
 const routeWarningText = computed(() => {
   if (singlePlace.value || !daySegments.value.length) return ''
-  if (!Object.keys(routePlans.value).length) return '正在生成真实道路路线'
+  if (routeError.value) return routeError.value
+  if (!daySegments.value.some(day => day.points.length >= 2)) return ''
+  if (routeLoading.value) return '正在查询高德路线指引'
+  if (!Object.keys(routePlans.value).length) return '暂无路线，请切换交通方式重试'
   const failedDays = visibleSegments.value
     .filter((segment) => !hasRealRoute(routePlans.value[segment.dayIndex]))
     .map((segment) => segment.dayIndex + 1)
   if (!failedDays.length) return ''
-  return `DAY ${failedDays.join('、')} 部分路段待地图服务确认`
+  return `DAY ${failedDays.join('、')} 暂未取得道路折线，仅显示地点；可点击导航查看真实路线`
 })
 
 const allVisiblePoints = computed(() => visibleSegments.value.flatMap((segment) => segment.points))
@@ -344,6 +366,7 @@ const polylines = computed(() =>
     color: routeColors[segment.dayIndex % routeColors.length],
     width: selectedDay.value >= 0 ? 8 : 7,
     arrowLine: true,
+    dottedLine: false,
     borderColor: '#FFFFFF',
     borderWidth: 2
   })))
@@ -352,7 +375,7 @@ const polylines = computed(() =>
 const routePolylineGroups = (segment: RouteSegment) => {
   const plan = routePlans.value[segment.dayIndex]
   const legGroups = (plan?.legs || [])
-    .map((leg) => leg.polyline || [])
+    .flatMap((leg) => leg.polylines?.length ? leg.polylines : [leg.polyline || []])
     .filter((points) => points.length >= 2)
   if (legGroups.length) return legGroups
   const merged = routePointsFor(segment)
@@ -361,8 +384,8 @@ const routePolylineGroups = (segment: RouteSegment) => {
 
 const hasRealRoute = (plan?: MapRoutePlan) => {
   if (!plan) return false
-  if (plan.provider && plan.provider.split(',').every((item) => item === 'fallback' || item === 'none')) return false
-  return (plan.polyline || []).length >= 2 || (plan.legs || []).some((leg) => (leg.polyline || []).length >= 2)
+  if (plan.provider && plan.provider.split(',').every((item) => item === 'fallback' || item === 'none' || item === 'unavailable')) return false
+  return (plan.polyline || []).length >= 2 || (plan.legs || []).some((leg) => (leg.polyline || []).length >= 2 || !!leg.polylines?.length)
 }
 
 const currentSegment = computed(() => {
@@ -380,7 +403,7 @@ const currentCardMeta = computed(() => {
   const point = currentPoint.value
   if (!point) return ''
   const plan = routePlans.value[point.dayIndex]
-  if (plan && !hasRealRoute(plan)) {
+  if (plan && plan.legs?.every(leg => !leg.ok)) {
     return `DAY ${point.dayIndex + 1} · 第 ${point.index + 1} 站 · 路线待确认`
   }
   const distance = formatDistance(plan?.distance || 0)
@@ -457,6 +480,8 @@ const back = () => {
 }
 
 const loadMapRoutes = async () => {
+  const requestId = ++routeRequest
+  routeLoading.value = true; routeError.value = ''
   const segments = daySegments.value.map((segment) => ({
     dayIndex: segment.dayIndex,
     points: segment.points.map((point) => ({
@@ -466,20 +491,57 @@ const loadMapRoutes = async () => {
     }))
   }))
   routePlans.value = {}
-  if (!segments.length) return
+  if (!segments.length) { routeLoading.value = false; return }
 
   try {
-    const response = await tripApi.planMapRoutes({ mode: 'touring', segments })
+    const response = await tripApi.planMapRoutes({ mode: routeMode.value, city: trip.value?.destination, segments })
+    if (requestId !== routeRequest) return
     const nextPlans: Record<number, MapRoutePlan> = {}
     ;(response?.segments || []).forEach((segment: MapRoutePlan) => {
       nextPlans[segment.dayIndex] = segment
     })
     routePlans.value = nextPlans
   } catch (error) {
-    console.warn('Map route planning failed, fallback to point polyline:', error)
+    if (requestId !== routeRequest) return
+    routeError.value = '路线查询失败，请切换交通方式重试'
     routePlans.value = {}
-  }
+  } finally { if (requestId === routeRequest) routeLoading.value = false }
 }
+
+const chooseMode = () => uni.showActionSheet({ itemList: Object.values(modeNames), success: ({ tapIndex }) => {
+  routeMode.value = Object.keys(modeNames)[tapIndex]; loadMapRoutes()
+}})
+const showDirections = () => {
+  const selected = selectedDay.value >= 0 ? [routePlans.value[selectedDay.value]] : Object.values(routePlans.value)
+  const text = selected.filter(Boolean).map(plan => `第 ${plan.dayIndex + 1} 天\n` + (plan.legs || []).map((leg, i) =>
+    `第 ${i + 1} 段 · ${modeNames[leg.mode || ''] || '交通'} · ${Math.round((leg.duration || 0) / 60)} 分钟\n${leg.error || (leg.instructions || []).join('；')}`
+  ).join('\n')).join('\n\n')
+  uni.showModal({ title: '高德路线指引', content: text || '路线正在查询或暂不可用，请稍后重试。', showCancel: false })
+}
+const mapTool = async (fn: () => Promise<void>) => {
+  if (toolBusy.value) return
+  toolBusy.value = true; uni.showLoading({ title: '正在查询高德' })
+  try { await fn() } catch (error) { uni.showModal({ title: '查询未完成', content: error instanceof Error ? error.message : '请稍后重试', showCancel: false }) }
+  finally { toolBusy.value = false; uni.hideLoading() }
+}
+const findNearby = () => mapTool(async () => {
+  const point = singlePlace.value || currentPoint.value || daySegments.value[0]?.points[0]
+  if (!point) return
+  const result = await tripApi.nearbyPlaces({ latitude: point.latitude, longitude: point.longitude })
+  uni.showModal({ title: '周边 1.5 公里餐饮', content: (result.pois || []).map((p: any) => `${p.name}\n${p.address}`).join('\n\n') || '暂无附近餐饮结果', showCancel: false })
+})
+const verifyPlace = () => mapTool(async () => {
+  const point = currentPoint.value || daySegments.value[0]?.points[0]
+  if (!point?.poiId || singlePlace.value) { uni.showToast({ title: '该地点没有高德 POI ID', icon: 'none' }); return }
+  const p = await tripApi.poiDetail(point.poiId)
+  uni.showModal({ title: p.name, content: `已核对高德地点\n${p.address}\n${p.opening_hours || ''}`, showCancel: false })
+})
+const exportPersonalMap = () => mapTool(async () => {
+  const result = await tripApi.exportMap({ title: `${trip.value?.destination || ''}旅行行程`, segments: daySegments.value.map(day => ({
+    dayIndex: day.dayIndex, title: `第 ${day.dayIndex + 1} 天`, points: day.points.map(p => ({ latitude: p.latitude, longitude: p.longitude, title: p.title, poiId: p.poiId }))
+  })) })
+  uni.setClipboardData({ data: result.url, success: () => uni.showModal({ title: '专属地图链接已复制', content: '请在浏览器中打开链接，按提示进入高德地图查看多天行程。', showCancel: false }) })
+})
 
 const formatDistance = (meters: number) => {
   if (!meters) return ''
@@ -498,6 +560,7 @@ const formatDuration = (seconds: number) => {
 </script>
 
 <style scoped lang="scss">
+.mcp-tools{position:absolute;top:120rpx;left:24rpx;right:24rpx;display:flex;justify-content:space-between;background:#fff;border-radius:20rpx;padding:20rpx 12rpx;font-size:22rpx;color:#2563eb;}
 .route-map-page {
   width: 100vw;
   min-height: 100vh;

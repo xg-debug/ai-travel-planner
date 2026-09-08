@@ -32,23 +32,24 @@
 
 ### 3.1 是否继续使用工作流式规划
 
-结论：**正式收敛为 LangGraph `TripPlanningWorkflow` 的 Plan-Execute-Replan 工作流。**
+结论：**规划入口收敛为 MCP ReAct Agent + `TripPlanningHarness`，确定性后处理继续保留。**
 
 理由：
 
-1. 旅游规划天然是多步骤任务，涉及需求理解、候选搜索、候选评分、天气影响、路线组织、预算估算、结果审查，适合工作流编排。
-2. 当前产品更需要稳定、低耗时、可解释的固定链路，而不是让多个模型角色自主路由。
-3. 旧 agent/orchestrator/graph 编排层已从源码删除，规划入口统一为 `backend/app/trip_planning/workflow.py`。
-4. LLM 仍参与 Planner、Replanner、Finalizer 和交通规划，但工具执行和状态流转由代码显式控制。
+1. 地点、餐饮、住宿和路线研究需要根据前一次工具结果自主决定下一步，适合单 Agent 的受控 ReAct 循环。
+2. Agent 只负责研究与结构化草案；预算、天气影响、风险提示和质量门槛仍由确定性代码负责。
+3. `TripPlanningHarness` 统一 run id、线程隔离、真实工具事件、单调进度和最终结果交付。
+4. API、SSE 与轮询 Job 使用同一事件协议，不再根据固定脚本模拟 Agent 进度。
 
 需要调整的地方：
 
-1. Executor 负责工具调用和结果写回，候选清洗保留在 `candidates.py`。
-2. 推荐去重、展示字段归一化由 `recommendations.py` 负责。
-3. 天气影响、预算和风险提醒分别由独立模块负责。
-4. 预算估算由 `BudgetService` 统一负责。
-5. 质量审查由 `trip_planning/reviewer` 统一负责。
-6. API 层只做输入校验、状态构造和响应转换，不承载规划逻辑。
+1. MCP 工具必须使用 allowlist，并记录非敏感调用轨迹。
+2. 未完成真实地点搜索或天气查询时阻断结果。
+3. 推荐去重、展示字段归一化由 `recommendations.py` 负责。
+4. 天气影响、预算和风险提醒分别由独立模块负责。
+5. API 层只做输入校验、状态构造和响应转换，不承载规划逻辑。
+
+完整重构说明见 `doc/agent-harness-redesign.md`。
 
 ### 3.2 编辑和导出边界
 

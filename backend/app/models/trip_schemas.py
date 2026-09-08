@@ -22,6 +22,7 @@ class TripPlanningRequest(BaseModel):
 
 class TripResponse(BaseModel):
     plan: str
+    planning_warnings: List[str] = Field(default_factory=list)
     pois: Dict[str, Any]
     itinerary: Optional[List[Dict[str, Any]]] = None
     weather: Optional[Dict[str, Any]] = None

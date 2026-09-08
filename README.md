@@ -1,354 +1,231 @@
-# 🌍 AI Travel Planner - 智能旅行规划系统
+<p align="center">
+  <img src="assets/readme/hero.png" alt="AI Travel Planner" width="720" />
+</p>
 
-基于大模型的智能旅行规划系统，实现自动生成多日旅行行程、实时调用地图、天气等外部工具、支持个性化推荐、提供可视化地图与行程展示。
+<h1 align="center">AI Travel Planner</h1>
 
-## ✨ 功能特性
+<p align="center">面向真实出行的 AI 行程规划系统：从旅行偏好到可执行的多日行程、地点核验和道路路线。</p>
 
-### 🎯 核心功能
-- **智能行程规划**: 基于大模型生成个性化多日旅行行程
-- **实时地图集成**: 集成高德地图，展示景点位置和路线
-- **天气预报**: 获取目的地实时天气和预报
-- **个性化推荐**: 根据用户偏好推荐景点、美食、活动
-- **预算估算**: 智能估算旅行费用，提供省钱建议
-- **移动端展示**: 微信小程序展示行程、地图、天气、预算和历史记录
+<p align="center">
+  <a href="https://github.com/xg-debug/ai-travel-planner/stargazers"><img src="https://img.shields.io/github/stars/xg-debug/ai-travel-planner?style=flat-square" alt="GitHub stars" /></a>
+  <a href="https://github.com/xg-debug/ai-travel-planner/issues"><img src="https://img.shields.io/github/issues/xg-debug/ai-travel-planner?style=flat-square" alt="GitHub issues" /></a>
+  <img src="https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.12" />
+  <img src="https://img.shields.io/badge/Vue-3-42b883?style=flat-square&logo=vuedotjs&logoColor=white" alt="Vue 3" />
+  <img src="https://img.shields.io/badge/AMap-MCP-00A870?style=flat-square" alt="AMap MCP" />
+</p>
 
-### 🛠️ 技术栈
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#产品能力">产品能力</a> ·
+  <a href="#地图与路线">地图与路线</a> ·
+  <a href="#项目结构">项目结构</a> ·
+  <a href="#接口概览">接口概览</a>
+</p>
 
-**后端 (Python)**
-- FastAPI - 高性能Web框架
-- LangChain - LLM Provider 适配
-- LangGraph Plan-Execute-Replan - 旅行规划工作流
-- 多LLM支持 (OpenAI, Anthropic, DeepSeek, Google)
-- 高德地图API集成
-- SQLAlchemy - 数据库ORM
-- Redis - 缓存
+---
 
-**小程序端 (uni-app)**
-- uni-app + Vue 3 + TypeScript
-- Pinia - 移动端状态管理
-- 微信原生地图组件
-- SSE 流式生成，失败时按错误类型兜底
+AI Travel Planner 把大模型的行程编排能力和真实地图数据结合起来。用户给出目的地、日期、预算和偏好后，系统会生成多日计划，核验 POI 信息，并把每个地点之间的路线放到真实地图上。Web、小程序和管理后台共用同一套后端与路线数据。
 
-**管理端 (Vue 3)**
-- Vue 3 + TypeScript + Vite
-- 运行时模型与地图配置管理
+## 界面预览
 
-## 🚀 快速开始
+![系统首页](assets/readme/homepage.png)
 
-### 环境要求
-- Python 3.12
-- Node.js 24
-- Redis (可选)
-- 高德地图API密钥
+![杭州行程的真实道路路线示例](assets/readme/route-map.png)
 
-### 1. 克隆项目
-```bash
-git clone <repository-url>
-cd ai-travel-planner
+## 产品能力
+
+| 能力 | 说明 |
+| --- | --- |
+| AI 多日行程 | 根据出发地、目的地、日期、预算、人数和兴趣生成可调整的每日安排。 |
+| 真实 POI 核验 | 对候选景点、酒店和餐饮按 POI ID 补全地址、坐标、营业信息和详情。 |
+| 周边餐饮 | 以景点或酒店坐标搜索附近餐饮，让每日安排更顺路。 |
+| 多种交通方式 | 支持自动推荐、步行、驾车、骑行与公交；规划、Web 地图和小程序地图复用同一份路线数据。 |
+| 真实地图 | Web 使用 Leaflet + OpenStreetMap 底图；小程序使用微信原生地图。没有道路坐标时只显示地点，不用直线伪造路线。 |
+| 专属地图导出 | 将多天行程导出到高德专属地图，并提供地点唤端链接。 |
+| 可追踪规划过程 | 支持 SSE 和异步任务两种进度通道，显示 Agent 的真实规划状态。 |
+| 运行时管理 | 管理后台可维护模型选择、地图服务配置和运行状态。 |
+
+## 地图与路线
+
+项目优先使用高德官方 MCP Server 获取地点、周边搜索、地点详情、天气和路线指引。MCP 路线响应不包含道路顶点时，可以打开道路几何补充开关，使用同一高德 Key 调用官方 Web 服务路线接口；此时距离、耗时、指引和坐标均来自同一次官方路线响应，避免地图与行程数据不一致。
+
+| 场景 | 数据来源 | 结果 |
+| --- | --- | --- |
+| POI 搜索、周边餐饮、地点详情、天气、专属地图 | 高德 MCP | 经过官方工具查询的地点与出行信息 |
+| 道路折线 | 高德路线 Web 服务（可选） | 步行、驾车、骑行、公交的真实道路坐标 |
+| Web 展示 | Leaflet + OpenStreetMap | 将高德 GCJ-02 坐标转换为 WGS-84 后渲染 |
+| 小程序展示 | 微信原生 `map` | 直接使用 GCJ-02 坐标与 polyline |
+
+> `AMAP_ROAD_GEOMETRY_ENABLED=true` 时启用道路折线补充。若接口暂不可用，界面只保留地点和明确提示，不绘制误导性的直线。
+
+更完整的参数、容错和验证说明见 [高德 MCP 接入说明](doc/amap-mcp.md)。
+
+## 技术架构
+
+```mermaid
+flowchart LR
+    U[旅行者] --> W[Web 端 Vue 3]
+    U --> M[微信小程序 uni-app]
+    A[运营人员] --> C[管理后台 Vue 3]
+    W --> B[FastAPI]
+    M --> B
+    C --> B
+    B --> P[规划 Agent<br/>Plan → Execute → Finalize]
+    P --> L[LLM Provider<br/>DeepSeek / OpenAI / Anthropic / Google]
+    P --> G[高德 MCP]
+    G --> R[高德路线 Web 服务<br/>可选道路坐标补充]
+    B --> D[(MySQL)]
+    B --> K[(Redis / 内存缓存)]
 ```
 
-### 2. 后端设置
+## 快速开始
+
+### 1. 准备环境
+
+- Python 3.12+
+- Node.js 20+
+- MySQL 8.0+
+- 一个可用的 LLM API Key
+- 高德 MCP Key；如需在 Web 和小程序地图上显示道路折线，还需要该 Key 具备高德 Web 服务路线权限
+
+### 2. 克隆并初始化数据库
+
 ```bash
+git clone https://github.com/xg-debug/ai-travel-planner.git
+cd ai-travel-planner
+
+# 创建数据库及基础表
+mysql -u root -p < backend/schema.sql
+```
+
+### 3. 配置并启动后端
+
+```bash
+cp backend/.env.example backend/.env
+
+# 编辑 backend/.env，至少填写 DATABASE_URL、一个 LLM Key 和高德 Key
 cd backend
-
-# 环境变量文件
-.env
-
-# 编辑 .env 文件，配置您的API密钥
-# 至少需要配置一个LLM API密钥（如OPENAI_API_KEY）
-# 和高德地图API密钥（AMAP_API_KEY）
-
-# 启动后端（使用脚本）
-chmod +x start.sh
-./start.sh
-
-# 或手动启动
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 3. 小程序设置
-```bash
-cd miniapp
+最小地图和模型配置示例：
 
-# 安装依赖
-npm install
+```env
+DATABASE_URL=mysql+pymysql://root:your_mysql_password@127.0.0.1:3306/ai_travel_planner?charset=utf8mb4
+SECRET_KEY=replace-with-a-long-random-secret
 
-# 微信小程序开发构建
-npm run dev:mp-weixin
+DEFAULT_LLM_PROVIDER=deepseek
+DEFAULT_LLM_MODEL=deepseek-chat
+DEEPSEEK_API_KEY=your_deepseek_key
 
-# 类型检查
-npm run type-check
+MAP_PROVIDER=amap_mcp
+AMAP_MCP_URL=https://mcp.amap.com/mcp
+AMAP_MCP_API_KEY=your_amap_key
+
+# 启用 Web 与小程序的真实道路折线
+AMAP_ROAD_GEOMETRY_ENABLED=true
 ```
 
-### 4. 管理端设置
+其他模型可使用 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 或 `GOOGLE_API_KEY`，并在管理后台或环境变量中切换默认 Provider。
+
+### 4. 启动 Web 端与管理后台
+
+新开两个终端窗口：
+
 ```bash
+# Web 行程端
+cd frontend
+npm install
+npm run dev
+```
+
+```bash
+# 管理后台
 cd admin
 npm install
 npm run dev
 ```
 
-### 5. 访问应用
-- 小程序: 使用微信开发者工具打开 `miniapp/dist/dev/mp-weixin`
-- 管理端: http://localhost:5173
-- 后端API文档: http://localhost:8000/docs
-- 后端健康检查: http://localhost:8000/health
+访问：
 
-## 📁 项目结构
+| 服务 | 地址 |
+| --- | --- |
+| Web 行程端 | [http://localhost:5173](http://localhost:5173) |
+| 管理后台 | [http://localhost:5174](http://localhost:5174) |
+| API 文档 | [http://localhost:8000/api/docs](http://localhost:8000/api/docs) |
+| 健康检查 | [http://localhost:8000/api/health](http://localhost:8000/api/health) |
 
-```
-ai-travel-planner/
-├── backend/                    # 后端代码
-│   ├── app/
-│   │   ├── api/               # API路由
-│   │   │   ├── trip_planning.py   # 规划与异步任务
-│   │   │   ├── trip_plans.py      # 行程保存与历史
-│   │   │   └── map_routes.py      # 地图路线接口
-│   │   ├── core/              # 核心配置
-│   │   │   ├── config.py      # 配置文件
-│   │   │   └── llm.py         # LLM工厂
-│   │   ├── trip_planning/     # LangGraph 旅行规划工作流
-│   │   │   ├── workflow.py    # TripPlanningWorkflow
-│   │   │   ├── nodes.py       # Planner / Executor / Replanner / Finalizer 节点
-│   │   │   ├── tool_executor.py # 天气、POI、住宿、交通工具执行
-│   │   │   ├── state.py       # 请求归一化与进度状态
-│   │   │   ├── jobs.py        # 异步任务状态
-│   │   │   └── errors.py      # 规划错误分类
-│   │   ├── mcp_tools/         # 地图 MCP/REST Provider
-│   │   ├── services/          # 业务服务
-│   │   │   ├── amap_service.py    # 地图服务
-│   │   │   ├── map_route_service.py # 地图路线服务
-│   │   │   └── runtime_config.py    # 运行时配置
-│   │   └── main.py            # 应用入口
-│   ├── requirements.txt       # Python依赖
-│   ├── .env.example          # 环境变量示例
-│   └── start.sh             # 启动脚本
-│
-├── miniapp/                   # 微信小程序端
-│   ├── src/
-│   │   ├── pages/            # 小程序页面
-│   │   ├── components/       # 移动端组件
-│   │   ├── services/         # uni.request / SSE 请求封装
-│   │   ├── stores/           # Pinia 状态
-│   │   └── utils/            # 行程转换与展示
-│   └── package.json
-│
-├── admin/                     # 管理端
-│   └── src/
-│
-└── README.md                 # 项目文档
-```
-
-## 🔧 配置说明
-
-### 环境变量 (backend/.env)
-
-#### LLM配置
-```env
-# 至少配置一个LLM提供商
-OPENAI_API_KEY=your_openai_api_key
-ANTHROPIC_API_KEY=your_anthropic_api_key
-DEEPSEEK_API_KEY=your_deepseek_api_key
-GOOGLE_API_KEY=your_google_api_key
-
-# 默认LLM配置
-DEFAULT_LLM_PROVIDER=deepseek
-DEFAULT_LLM_MODEL=deepseek-v4-flash
-LLM_TEMPERATURE=
-LLM_MAX_TOKENS=
-```
-
-#### 地图服务
-```env
-# 推荐：高德地图 MCP Server SSE
-MAP_PROVIDER=amap_mcp_sse
-AMAP_MCP_SSE_URL=your_amap_mcp_sse_url
-AMAP_MCP_API_KEY=your_amap_mcp_key
-
-# 备用：直接调用地图 REST API
-AMAP_API_KEY=your_amap_api_key
-TENCENT_MAP_API_KEY=your_tencent_map_key
-UNSPLASH_ACCESS_KEY=your_unsplash_access_key
-UNSPLASH_SECRET_KEY=your_unsplash_secret_key
-```
-
-#### 其他配置
-```env
-# 应用配置
-DEBUG=true
-PORT=8000
-
-# 数据库
-DATABASE_URL=mysql+pymysql://travel_user:travel_password@127.0.0.1:3306/ai_travel_planner?charset=utf8mb4
-
-# 安全
-SECRET_KEY=your-secret-key-change-in-production
-```
-
-### 环境变量 (miniapp/.env)
-```env
-VITE_API_BASE_URL=http://localhost:8000/api
-```
-
-## 📊 API接口
-
-### 主要端点
-
-#### 1. 规划行程
-```http
-POST /api/trip/planning
-Content-Type: application/json
-
-{
-  "departureCity": "上海",
-  "destination": "北京",
-  "startDate": "2026-07-15",
-  "endDate": "2026-07-17",
-  "departureTime": "08:00",
-  "returnArrivalTime": "20:00",
-  "days": 3,
-  "travelers": 4,
-  "interests": ["classic", "history"],
-  "budgetAmount": 12000,
-  "accommodationPreference": "mid-range",
-  "additionalRequirements": "家庭旅行，适合小朋友的景点"
-}
-```
-
-#### 2. 流式规划
-```http
-POST /api/trip/planning/stream
-```
-
-#### 3. 异步任务规划
-```http
-POST /api/trip/planning/jobs
-GET /api/trip/planning/jobs/{job_id}
-```
-
-#### 4. 行程管理
-```http
-GET /api/trip/plans
-POST /api/trip/plans
-GET /api/trip/plans/{id}
-PUT /api/trip/plans/{id}
-DELETE /api/trip/plans/{id}
-```
-
-#### 5. 地图路线
-```http
-POST /api/trip/route/map
-```
-
-## 🎨 小程序功能
-
-### 主要界面
-
-1. **用户需求页**：出发地、目的地、日期、人数、偏好、预算和住宿档位。
-2. **生成中页**：SSE 真实进度；余额不足、密钥无效等不可重试错误会立即停止。
-3. **行程总览页**：每日安排、推荐景点、美食推荐、酒店推荐、预算、往返交通。
-4. **路线大图**：微信原生地图组件展示真实道路 polyline。
-5. **地点详情页**：地点信息、参考价格、营业时间和站内地图定位。
-6. **历史行程与登录页**：支持登录、保存和加载历史行程。
-   - 基于偏好的智能推荐
-   - 实用信息和建议
-
-## 🔄 工作流程
-
-```mermaid
-graph TD
-    A[用户输入需求] --> B[验证输入]
-    B --> C[AI行程规划]
-    C --> D[获取POI信息]
-    D --> E[获取天气预报]
-    E --> F[生成个性化推荐]
-    E --> G[估算旅行预算]
-    F --> H[生成最终总结]
-    G --> H
-    H --> I[返回完整行程]
-```
-
-## 🧪 测试数据
-
-如果没有配置 API Key 或模型余额不足，系统会返回明确错误：
-
-- `LLM_INSUFFICIENT_BALANCE`：模型账户余额不足，不会在小程序端反复重试。
-- `LLM_INVALID_API_KEY`：模型密钥无效。
-- `LLM_NOT_CONFIGURED`：未配置任何可用模型。
-- 地图 Key 缺失时，路线和 POI 能力会降级或提示配置问题。
-
-## 🚨 故障排除
-
-### 常见问题
-
-1. **后端启动失败**
-   - 检查Python版本（需要3.8+）
-   - 检查依赖安装：`pip install -r requirements.txt`
-   - 检查端口占用：`lsof -i:8000`
-
-2. **小程序构建失败**
-   - 检查 Node.js 版本（建议 24）
-   - 在 `miniapp/` 下重新安装依赖：`npm install`
-   - 运行 `npm run type-check` 定位类型错误
-
-3. **地图不显示**
-   - 检查高德/腾讯地图 API Key 或高德 MCP SSE 配置
-   - 检查网络连接
-   - 查看微信开发者工具 Console 和 Network
-
-4. **AI功能不可用**
-   - 检查LLM API密钥配置
-   - 检查网络连接（某些API需要科学上网）
-   - 查看后端日志获取详细错误信息
-
-### 日志查看
+### 5. 构建微信小程序
 
 ```bash
-# 后端日志
-cd backend
-tail -f logs/app.log
-
-# 小程序日志
-# 在微信开发者工具中查看 Console 和 Network
+cd miniapp
+npm install
+npm run dev:mp-weixin
 ```
 
-## 📈 性能优化
+使用微信开发者工具导入 `miniapp/dist/dev/mp-weixin`。真机调试时，将 `miniapp/.env` 中的 API 地址改成开发机器可访问的局域网地址；生产环境需使用已配置到微信合法域名的 HTTPS 地址。
 
-### 缓存策略
-- POI、天气、路线查询使用后端轻量缓存
-- 小程序本地缓存最近一次行程和草稿
-- 路线大图按天请求真实道路 polyline
+## 项目结构
 
-### 异步处理
-- SSE 优先推送真实规划进度
-- 基础库不支持分块响应时，降级为异步 Job 状态接口
-- 不可重试错误（余额不足、Key 无效）直接终止，不再重复发起任务
+```text
+ai-travel-planner/
+├── backend/                 # FastAPI、规划 Agent、MCP 与业务服务
+│   ├── app/api/             # 行程、地图、认证、管理端接口
+│   ├── app/trip_planning/   # Plan/Execute/Finalize 与任务进度
+│   ├── app/mcp_tools/       # 高德 MCP Provider 与响应适配
+│   ├── app/services/        # 路线、缓存、运行时配置
+│   ├── tests/               # MCP、路线、Agent 测试
+│   └── schema.sql           # MySQL 初始化脚本
+├── frontend/                # Vue 3 Web 行程端
+├── miniapp/                 # uni-app 微信小程序
+├── admin/                   # Vue 3 管理后台
+├── doc/                     # 安装、设计与地图接入文档
+└── assets/readme/           # README 展示图片
+```
 
-### 监控指标
-- API 响应时间和规划耗时
-- LLM 错误码、余额/Key 配置问题
-- 地图路线真实 polyline 命中率
-- 小程序生成失败率和重试率
+## 接口概览
 
-## 🔮 未来规划
+| 接口 | 用途 |
+| --- | --- |
+| `POST /api/trip/planning` | 创建行程规划 |
+| `POST /api/trip/planning/stream` | 流式接收规划进度 |
+| `POST /api/trip/planning/jobs` | 创建异步规划任务 |
+| `GET /api/trip/plans` | 获取已保存行程 |
+| `POST /api/trip/route/map` | 按交通方式计算每日道路路线 |
+| `POST /api/trip/map/around` | 基于坐标搜索附近餐饮等 POI |
+| `GET /api/trip/map/pois/{poi_id}` | 查询地点详情 |
+| `POST /api/trip/map/export` | 导出高德专属地图 |
 
-### 短期计划
-- [ ] 接入更可靠的酒店价格/库存数据源
-- [ ] 增加景点门票和营业时间的二次校验
-- [ ] 完善行程编辑与分享卡片
-- [ ] 增加路线规划命中率监控
+完整接口定义可在启动后访问 `/api/docs`。
 
-### 长期计划
-- [ ] 社交分享和协同行程
-- [ ] AI导游语音助手
-- [ ] 智能拍照建议
+## 开发与验证
 
-## 📄 许可证
+```bash
+# 后端测试
+cd backend
+.venv/bin/python -m unittest discover -s tests -q
 
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
+# Web 构建
+cd ../frontend
+npm run build
 
----
+# 管理端构建
+cd ../admin
+npm run build
 
-**让AI为您规划完美的旅行！** ✈️🌴🏛️
+# 小程序构建
+cd ../miniapp
+npm run build:mp-weixin
+```
+
+## 文档与反馈
+
+- [安装与部署说明](doc/INSTALL.md)
+- [高德 MCP 与道路路线接入](doc/amap-mcp.md)
+- [详细设计](doc/detailed-design.md)
+- [提交 Issue](https://github.com/xg-debug/ai-travel-planner/issues)
+
+欢迎通过 Issue 提交问题、使用反馈和功能建议。

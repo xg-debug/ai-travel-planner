@@ -1,26 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, List, Mapping
 
 from app.core.config import settings
 from app.services.travel_intent import normalize_trip_city_and_query
+from app.trip_planning.events import STEP_PROGRESS
 
 TripPlanningState = Dict[str, Any]
 
-WORKFLOW_STEP_PROGRESS: Dict[str, int] = {
-    "request_analysis": 5,
-    "weather_lookup": 12,
-    "attraction_search": 22,
-    "food_search": 32,
-    "hotel_search": 42,
-    "transport_planning": 60,
-    "itinerary_review": 68,
-    "itinerary_synthesis": 70,
-    "budget_estimation": 94,
-    "risk_notices": 96,
-    "summary": 98,
-}
+WORKFLOW_STEP_PROGRESS: Dict[str, int] = STEP_PROGRESS
 
 def trip_request_to_state(request: Any) -> TripPlanningState:
     payload = _model_dump(request)

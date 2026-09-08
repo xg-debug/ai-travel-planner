@@ -5,7 +5,12 @@ from typing import Any, Dict, List
 
 from app.core.llm import invoke_llm_with_fallback
 from app.trip_planning.graph_state import TripPlanningGraphState
-from app.trip_planning.itinerary import normalize_itinerary, summary_node
+from app.trip_planning.itinerary import (
+    enrich_activity_with_poi,
+    normalize_itinerary,
+    select_state_candidate_for_activity,
+    summary_node,
+)
 from app.trip_planning.prompts import build_finalizer_prompt, build_planner_prompt, build_replanner_prompt
 from app.trip_planning.tool_executor import TripPlanningToolbox, finalize_budget_and_risk
 from app.trip_planning.utils import extract_json_block
@@ -21,6 +26,7 @@ def planner_node(state: TripPlanningGraphState) -> Dict[str, Any]:
         temperature=0.25,
         max_tokens=1800,
         request_timeout=35,
+        max_retries=0,
     )
     parsed = extract_json_block(getattr(response, "content", response)) or {}
     if not isinstance(parsed, dict):
@@ -63,6 +69,7 @@ def replanner_node(state: TripPlanningGraphState) -> Dict[str, Any]:
         temperature=0.15,
         max_tokens=1200,
         request_timeout=30,
+        max_retries=0,
     )
     parsed = extract_json_block(getattr(response, "content", response)) or {}
     if not isinstance(parsed, dict):
@@ -88,11 +95,13 @@ def finalizer_node(state: TripPlanningGraphState) -> Dict[str, Any]:
         temperature=0.25,
         max_tokens=_finalizer_tokens(state),
         request_timeout=90,
+        max_retries=0,
     )
     parsed = extract_json_block(getattr(response, "content", response)) or {}
     itinerary = parsed.get("itinerary") if isinstance(parsed, dict) else []
     plan = normalize_itinerary(itinerary or [], dict(state))
     plan = _attach_consistent_hotels(plan, list(state.get("hotel_options") or []))
+    plan = _enrich_plan_media(plan, dict(state))
     final_output = str(parsed.get("final_output") or "") if isinstance(parsed, dict) else ""
     if not any(day.get("activities") for day in plan):
         plan = _fallback_itinerary(dict(state))
@@ -192,6 +201,24 @@ def _attach_consistent_hotels(plan: List[Dict[str, Any]], hotels: List[Dict[str,
     return plan
 
 
+def _enrich_plan_media(plan: List[Dict[str, Any]], state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Restore verified POI metadata that an LLM finalizer may omit."""
+    used_names: set[str] = set()
+    city = str(state.get("city") or "").strip()
+    for day in plan:
+        activities: List[Dict[str, Any]] = []
+        for activity in day.get("activities") or []:
+            poi = select_state_candidate_for_activity(state, activity, used_names)
+            if poi:
+                activity = enrich_activity_with_poi(activity, poi, city)
+                name = str(poi.get("name") or "").strip()
+                if name:
+                    used_names.add(name)
+            activities.append(activity)
+        day["activities"] = activities
+    return plan
+
+
 def _hotel_for_day(hotel: Dict[str, Any]) -> Dict[str, Any]:
     lat = float(hotel.get("lat") or 0)
     lng = float(hotel.get("lng") or 0)
@@ -206,6 +233,9 @@ def _hotel_for_day(hotel: Dict[str, Any]) -> Dict[str, Any]:
     }
     if lat and lng:
         result["coordinates"] = {"lat": lat, "lng": lng}
+    image_url = str(hotel.get("image_url") or hotel.get("image") or "").strip()
+    if image_url:
+        result["image"] = image_url
     return result
 
 
@@ -262,6 +292,9 @@ def _activity_from_candidate(item: Dict[str, Any], time: str, activity_type: str
     }
     if lat and lng:
         activity["coordinates"] = {"lat": lat, "lng": lng}
+    image_url = str(item.get("image_url") or item.get("image") or "").strip()
+    if image_url:
+        activity["image"] = image_url
     return activity
 
 

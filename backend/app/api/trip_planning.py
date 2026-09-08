@@ -3,10 +3,11 @@ import json
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.models.trip_schemas import TripPlanningRequest, TripResponse
+from app.domain import travel_domain_service
 from app.trip_planning.errors import classify_planning_error
 from app.trip_planning.jobs import trip_planning_job_service
 from app.trip_planning import trip_planning_workflow
@@ -15,6 +16,26 @@ from app.trip_planning.state import WORKFLOW_STEP_PROGRESS, trip_request_to_stat
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+@router.get("/weather")
+async def get_trip_weather(city: str = Query(..., min_length=1, max_length=50), days: int = Query(3, ge=1, le=7)):
+    """Return the compact weather list consumed by Web detail refresh."""
+    try:
+        weather = travel_domain_service.get_weather(city.strip(), days)
+        items = []
+        for forecast in (weather or {}).get("forecast", [])[:days]:
+            temperature = forecast.get("temperature") or {}
+            average = temperature.get("avg")
+            if average in (None, ""):
+                low = float(temperature.get("min") or 0)
+                high = float(temperature.get("max") or low)
+                average = round((low + high) / 2, 1)
+            items.append({**forecast, "city": weather.get("city") or city, "temperature": average})
+        return items
+    except Exception as exc:
+        logger.warning("Weather refresh failed city=%s error=%s", city, exc)
+        raise HTTPException(status_code=503, detail="天气服务暂时不可用，请稍后重试") from exc
 
 
 @router.post("/planning", response_model=TripResponse)
@@ -80,7 +101,7 @@ async def plan_trip_stream(request: TripPlanningRequest):
                 if event["event"] == "status":
                     payload = dict(event["data"] or {})
                     step = str(payload.get("step") or "")
-                    payload["progress"] = WORKFLOW_STEP_PROGRESS.get(step, 0)
+                    payload.setdefault("progress", WORKFLOW_STEP_PROGRESS.get(step, 0))
                     yield _sse("status", payload)
                     continue
                 if event["event"] == "partial_result":

@@ -21,6 +21,7 @@
             <text>{{ activity.time }}</text>
           </view>
           <view class="activity__content">
+            <image v-if="activity.image" class="activity__cover" :src="activity.image" mode="aspectFill" />
             <view class="activity__top">
               <text class="activity__title">{{ activity.title }}</text>
               <text class="activity__price">{{ formatMoney(activity.cost) }}</text>
@@ -39,6 +40,7 @@
 
     <SectionPanel v-if="day.hotel" title="住宿推荐">
       <view class="hotel">
+        <image v-if="day.hotel.image" class="hotel__cover" :src="day.hotel.image" mode="aspectFill" />
         <text class="hotel__name">{{ day.hotel.name }}</text>
         <text v-if="day.hotel.address" class="hotel__line">{{ day.hotel.address }}</text>
         <text v-if="day.hotel.referencePriceRange" class="hotel__reference">{{ day.hotel.referencePriceRange }}</text>
@@ -200,6 +202,15 @@ const back = () => {
   background: #fbfcff;
 }
 
+.activity__cover {
+  display: block;
+  width: 100%;
+  height: 220rpx;
+  margin-bottom: 20rpx;
+  border-radius: 18rpx;
+  background: #edf1f5;
+}
+
 .activity__top {
   display: flex;
   align-items: flex-start;
@@ -251,6 +262,15 @@ const back = () => {
 .hotel {
   display: grid;
   gap: 12rpx;
+}
+
+.hotel__cover {
+  display: block;
+  width: 100%;
+  height: 300rpx;
+  margin-bottom: 8rpx;
+  border-radius: 22rpx;
+  background: #edf1f5;
 }
 
 .hotel__name {

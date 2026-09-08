@@ -36,7 +36,7 @@ class LLMFactory:
     ) -> BaseChatModel:
         provider = provider or get_llm_provider()
         model = model or get_llm_model(provider)
-        temperature = temperature or settings.LLM_TEMPERATURE
+        temperature = settings.LLM_TEMPERATURE if temperature is None else temperature
         max_tokens = max_tokens or settings.LLM_MAX_TOKENS
         request_timeout = settings.LLM_REQUEST_TIMEOUT_SECONDS if request_timeout is None else request_timeout
         max_retries = settings.LLM_MAX_RETRIES if max_retries is None else max_retries
@@ -53,6 +53,7 @@ class LLMFactory:
                 temperature=temperature,
                 timeout=request_timeout,
                 max_retries=max_retries,
+                max_completion_tokens=max_tokens,
             )
 
         elif provider == "anthropic":
@@ -94,6 +95,7 @@ class LLMFactory:
                 temperature=temperature,
                 timeout=request_timeout,
                 max_retries=max_retries,
+                max_tokens=max_tokens,
             )
 
         else:
@@ -121,7 +123,7 @@ def _try_create_llm(provider: str, temperature: float, max_tokens: int,
                     default_provider: str) -> BaseChatModel | None:
     if not _provider_has_key(provider):
         return None
-    preferred_model = get_llm_model(provider) if provider == default_provider else None
+    preferred_model = get_llm_model(provider)
     model = _resolve_model(provider, preferred_model)
     try:
         return LLMFactory.create_llm(
@@ -159,7 +161,10 @@ def invoke_llm_with_fallback(
             continue
         try:
             logger.info("Invoking LLM provider=%s", provider)
-            return llm.invoke(prompt)
+            response = llm.invoke(prompt)
+            if isinstance(getattr(response, "content", None), list):
+                response = response.model_copy(update={"content": _message_text(response)})
+            return response
         except Exception as exc:
             err = f"{provider}: {exc}"
             errors.append(err)
@@ -195,8 +200,8 @@ def stream_llm_with_fallback(
         try:
             logger.info("Streaming LLM provider=%s", provider)
             for chunk in llm.stream(prompt):
-                content = getattr(chunk, "content", "")
-                if isinstance(content, str) and content:
+                content = _message_text(chunk)
+                if content:
                     yield content
             return
         except Exception as exc:
@@ -213,11 +218,17 @@ def stream_llm_with_fallback(
 def _message_text(response: Any) -> str:
     content = getattr(response, "content", response)
     if isinstance(content, list):
-        return "\n".join(
-            str(item.get("text") or item.get("content") or item)
-            if isinstance(item, dict) else str(item)
-            for item in content
-        )
+        # Responses uses content blocks. Only visible text belongs in itinerary
+        # JSON or the UI stream; reasoning/tool metadata is not answer text.
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and item.get("type") in {None, "text", "output_text"}:
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
     return str(content or "")
 
 

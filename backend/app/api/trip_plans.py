@@ -1,4 +1,6 @@
 import logging
+import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -31,6 +33,7 @@ class TripPlanPayload(BaseModel):
     hotels: List[Dict[str, Any]] = Field(default_factory=list)
     intercityTransport: Dict[str, Any] = Field(default_factory=dict)
     plan: str = ""
+    planningWarnings: List[str] = Field(default_factory=list)
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
 
@@ -98,14 +101,19 @@ def create_trip_plan(
             db.refresh(existing)
             return existing.payload()
 
+        # SQLAlchemy's UUID default is assigned on INSERT. Persist the id in the
+        # JSON payload up front as well, otherwise list/history returns id=null
+        # even though direct lookup by the database row id succeeds.
+        new_plan_id = payload.id or str(uuid.uuid4())
+        data["id"] = new_plan_id
+        data["createdAt"] = data.get("createdAt") or datetime.utcnow().isoformat()
         row = TripPlan(
+            id=new_plan_id,
             user_id=current_user.id,
             destination=payload.destination,
             start_date=payload.startDate,
             end_date=payload.endDate,
         )
-        if payload.id:
-            row.id = payload.id
         row.sync_from_payload(data)
         db.add(row)
         db.commit()

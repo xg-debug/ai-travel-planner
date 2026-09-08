@@ -4,7 +4,6 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, Iterable, List
 
-from app.core.llm import invoke_llm_with_fallback
 from app.domain import travel_domain_service
 from app.trip_planning.budget import budget_node
 from app.trip_planning.intercity_transport import plan_intercity_transport
@@ -16,9 +15,8 @@ from app.trip_planning.candidates import (
     normalize_search_query,
     score_general_candidate,
 )
-from app.trip_planning.prompts import build_hotel_prompt
 from app.trip_planning.recommendations import build_recommendation_from_candidates
-from app.trip_planning.utils import dedupe, extract_json_block
+from app.trip_planning.utils import dedupe
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +67,22 @@ class TripPlanningToolbox:
     def search_foods(self, state: Dict[str, Any], args: Dict[str, Any]) -> Dict[str, Any]:
         city = str(state.get("city") or "").strip()
         queries = _normalize_queries(args.get("queries"), city, fallback=[f"{city}本地特色美食", f"{city}老字号餐厅", f"{city}美食街"])
-        candidates = [_item for _item in _search_many(city, queries, size=8) if not _is_blocked_food(_item)]
+        candidates = []
+        anchors = list(state.get("attraction_candidates") or [])[:3] + list(state.get("hotel_options") or [])[:2]
+        for anchor in anchors:
+            if not anchor.get("lng") or not anchor.get("lat"):
+                continue
+            try:
+                nearby = travel_domain_service.search_around(f"{anchor['lng']},{anchor['lat']}", "餐厅", radius=1500, size=5)
+                for item in nearby:
+                    item["nearby_anchor"] = anchor.get("name", "")
+                    item["description"] = f"{item.get('address', '')}；位于{anchor.get('name', '')}周边搜索范围内"
+                candidates.extend(nearby)
+            except Exception:
+                logger.info("Nearby food search unavailable for one anchor")
+        if len(candidates) < 6:
+            candidates.extend(_search_many(city, queries, size=8))
+        candidates = [item for item in candidates if not _is_blocked_food(item)]
         candidates = _rank_candidates(candidates, city, queries, hotel=False)
         existing = list(state.get("food_candidates", []) or [])
         merged = dedupe_candidates_by_name(existing + candidates, city)[: max(18, int(state.get("days", 1) or 1) * 6)]
@@ -82,15 +95,22 @@ class TripPlanningToolbox:
     def recommend_hotels(self, state: Dict[str, Any], args: Dict[str, Any]) -> Dict[str, Any]:
         count = max(3, min(int(args.get("count") or 5), 8))
         areas = [str(item).strip() for item in (args.get("areas") or []) if str(item).strip()]
-        response = invoke_llm_with_fallback(
-            build_hotel_prompt(state, areas, count),
-            temperature=0.35,
-            max_tokens=1800,
-            request_timeout=35,
-        )
-        parsed = extract_json_block(getattr(response, "content", response)) or {}
-        hotels = parsed.get("hotels") if isinstance(parsed, dict) else []
-        normalized = _normalize_llm_hotels(hotels or [], state, count)
+        city = str(state.get("city") or "").strip()
+        search_areas = areas or [f"{city}核心游览区"]
+        attraction_anchors = [
+            str(item.get("name") or "").strip()
+            for item in (state.get("attraction_candidates") or [])[:3]
+            if str(item.get("name") or "").strip()
+        ]
+        queries = dedupe(
+            [area if "酒店" in area else f"{area} 酒店" for area in search_areas]
+            + [f"{name} 附近酒店" for name in attraction_anchors]
+            + [f"{city}市中心 酒店"]
+        )[:5]
+        candidates = _search_many(city, queries, size=max(8, count * 2))
+        hotels = [item for item in candidates if _is_hotel_candidate(item)]
+        ranked = _rank_candidates(hotels or candidates, city, queries, hotel=True)
+        normalized = _normalize_map_hotels(ranked, state, count)
         existing = list(state.get("hotel_options", []) or [])
         merged = dedupe_candidates_by_name(existing + normalized, str(state.get("city", "")))[:count]
         recommendation = build_recommendation_from_candidates(
@@ -98,7 +118,7 @@ class TripPlanningToolbox:
             "酒店推荐",
             "住宿",
             merged,
-            "由 LLM 根据住宿档位、预算、行程区域生成，价格为参考区间。",
+            "来自真实地图 POI，价格按住宿档位提供参考区间，预订前请核对实时房态。",
         )
         return {
             "hotel_options": merged,
@@ -142,7 +162,7 @@ def _search_many(city: str, queries: List[str], size: int) -> List[Dict[str, Any
                         results.append(next_item)
             except Exception as exc:
                 logger.warning("POI search failed city=%s query=%s error=%s", city, query, exc)
-    return filter_real_candidates(results, allow_sources={"geo", "amap", "amap_mcp_sse", "tencent"})
+    return filter_real_candidates(results, allow_sources={"geo", "amap", "amap_mcp_sse", "amap_mcp", "tencent"})
 
 
 def _rank_candidates(items: List[Dict[str, Any]], city: str, queries: List[str], hotel: bool) -> List[Dict[str, Any]]:
@@ -211,6 +231,39 @@ def _normalize_llm_hotels(items: List[Dict[str, Any]], state: Dict[str, Any], co
     ]
 
 
+def _normalize_map_hotels(items: List[Dict[str, Any]], state: Dict[str, Any], count: int) -> List[Dict[str, Any]]:
+    city = str(state.get("city") or "").strip()
+    preference = str(state.get("accommodation_preference") or "mid-range")
+    price_range = _default_hotel_price_range(preference)
+    budget_price = _default_hotel_budget_price(preference)
+    normalized: List[Dict[str, Any]] = []
+    for index, item in enumerate(items[:count]):
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        normalized.append(
+            {
+                "id": str(item.get("id") or f"map_hotel_{index + 1}"),
+                "name": name,
+                "address": str(item.get("address") or city),
+                "type": str(item.get("type") or "酒店"),
+                "rating": float(item.get("rating") or 0),
+                "price": price_range,
+                "price_estimate": price_range,
+                "budget_price_per_room": budget_price,
+                "price_is_estimated": True,
+                "reason": "靠近主要游览区或公共交通，地点已通过地图服务核验；价格为档位参考。",
+                "lat": float(item.get("lat") or 0),
+                "lng": float(item.get("lng") or 0),
+                "image_url": str(item.get("image_url") or "").strip(),
+                "source": str(item.get("source") or "geo"),
+            }
+        )
+    if normalized:
+        return normalized
+    return _normalize_llm_hotels([], state, count)
+
+
 def _default_hotel_price_range(preference: str) -> str:
     if preference == "budget":
         return "约 180-300 元/间夜（参考）"
@@ -236,6 +289,21 @@ def _is_blocked_food(item: Dict[str, Any]) -> bool:
     text = " ".join(str(item.get(key, "") or "") for key in ("name", "address", "type", "description"))
     blocked = ("食堂", "餐厅(内部)", "内部餐厅", "单位餐厅", "学校餐厅", "大学", "学院", "校区")
     return any(token in text for token in blocked)
+
+
+def _is_hotel_candidate(item: Dict[str, Any]) -> bool:
+    name = str(item.get("name") or "")
+    type_text = str(item.get("type") or "")
+    accommodation_tokens = ("住宿服务", "宾馆酒店", "酒店", "宾馆", "客栈", "民宿", "旅馆", "度假村")
+    dining_tokens = ("餐饮服务", "酒廊", "餐厅", "咖啡", "茶室", "宴会")
+    if any(token in type_text for token in dining_tokens) and not any(
+        token in type_text for token in ("住宿服务", "宾馆酒店")
+    ):
+        return False
+    return any(token in type_text for token in accommodation_tokens) or (
+        any(token in name for token in accommodation_tokens)
+        and not any(token in name for token in dining_tokens)
+    )
 
 
 def _append_recommendation(existing: Any, item: Dict[str, Any]) -> List[Dict[str, Any]]:

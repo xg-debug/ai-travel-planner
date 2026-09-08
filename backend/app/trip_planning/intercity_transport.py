@@ -54,20 +54,46 @@ def plan_intercity_transport(
         )
         return _assemble_plan(departure, destination, traveler_count, outbound, inbound)
 
-    llm_plan = _plan_with_llm(
-        departure=departure,
-        destination=destination,
-        travelers=traveler_count,
-        trip_start=trip_start,
-        travel_days=travel_days,
-        outbound_departure_at=outbound_departure_at,
-        return_arrival_at=return_arrival_at,
-        budget_amount=budget_amount,
-        budget_level=budget_level,
-        preferences=preferences or [],
-    )
-    if llm_plan:
-        return llm_plan
+    # The execution layer must be deterministic and bounded. Use real map
+    # distance as the primary signal instead of starting another nested LLM
+    # call inside the agent's transport tool.
+    route_metrics = _query_route_metrics(departure, destination)
+    if route_metrics:
+        distance_km, route_duration_minutes = route_metrics
+        outbound = _build_leg(
+            direction="outbound",
+            from_city=departure,
+            to_city=destination,
+            distance_km=distance_km,
+            route_duration_minutes=route_duration_minutes,
+            travelers=traveler_count,
+            trip_start=trip_start,
+            travel_days=travel_days,
+            outbound_departure_at=outbound_departure_at,
+            return_arrival_at=return_arrival_at,
+            source="map",
+        )
+        inbound = _build_leg(
+            direction="inbound",
+            from_city=destination,
+            to_city=departure,
+            distance_km=distance_km,
+            route_duration_minutes=route_duration_minutes,
+            travelers=traveler_count,
+            trip_start=trip_start,
+            travel_days=travel_days,
+            outbound_departure_at=outbound_departure_at,
+            return_arrival_at=return_arrival_at,
+            source="map",
+        )
+        return _assemble_plan(
+            departure,
+            destination,
+            traveler_count,
+            outbound,
+            inbound,
+            distance_km=distance_km,
+        )
 
     outbound = _build_fallback_leg(
         direction="outbound",
@@ -89,7 +115,7 @@ def plan_intercity_transport(
         outbound_departure_at=outbound_departure_at,
         return_arrival_at=return_arrival_at,
     )
-    outbound["note"] = "大模型交通推荐不可用，系统仅给出待确认的候选模板，建议出行前核对实时票价与站点。"
+    outbound["note"] = "地图距离暂不可用，系统仅给出待确认的候选模板，建议出行前核对实时票价与站点。"
     inbound["note"] = outbound["note"]
     return _assemble_plan(departure, destination, traveler_count, outbound, inbound)
 
@@ -254,7 +280,7 @@ def _build_leg(
         return_arrival_at,
     )
     total_cost = int(cost_per_person * travelers)
-    return {
+    best_option = {
         "direction": direction,
         "from": from_city,
         "to": to_city,
@@ -274,6 +300,27 @@ def _build_leg(
         "source": source,
         "note": "基于地图路线距离估算，价格为单人单程预算参考。" if source == "map" else "系统兜底估算，建议出行前核对车次或航班。",
     }
+    best_option["recommended"] = True
+    alternatives = _fallback_alternatives(
+        direction=direction,
+        from_city=from_city,
+        to_city=to_city,
+        travelers=travelers,
+        fallback_departure=depart_at,
+        anchor_departure=outbound_departure_at if direction == "outbound" else None,
+        anchor_arrival=return_arrival_at if direction == "inbound" else None,
+        excluded_modes={mode},
+        source_name="fallback_candidate",
+    )[:3]
+    return _leg_from_options(
+        direction=direction,
+        from_city=from_city,
+        to_city=to_city,
+        travelers=travelers,
+        best_option=best_option,
+        alternatives=alternatives,
+        source=source,
+    )
 
 
 def _plan_with_llm(
@@ -708,7 +755,7 @@ def _leg_from_options(
         "arrival_time": best_option.get("arrival_time"),
         "duration_minutes": int(best_option.get("duration_minutes") or 0),
         "duration_text": best_option.get("duration_text") or _format_duration(int(best_option.get("duration_minutes") or 0)),
-        "distance_km": 0,
+        "distance_km": float(best_option.get("distance_km") or 0),
         "cost_per_person": int(best_option.get("cost_per_person") or 0),
         "total_cost": total_cost,
         "currency": "CNY",
@@ -825,7 +872,14 @@ def _default_duration_for_mode(mode: str) -> int:
 def _estimate_mode_time_cost(distance_km: float, route_duration_minutes: int) -> Tuple[str, int, int]:
     for threshold, mode, cost_fn in TRANSPORT_MODE_RULES:
         if distance_km <= threshold:
-            minutes = route_duration_minutes or max(45, int(distance_km / 60 * 60) + 20)
+            if distance_km <= 80:
+                minutes = route_duration_minutes or max(45, int(distance_km) + 20)
+            elif distance_km <= 650:
+                minutes = max(75, int(40 + distance_km * 0.48))
+            elif distance_km <= 1200:
+                minutes = max(150, int(70 + distance_km * 0.52))
+            else:
+                minutes = max(180, int(150 + distance_km * 0.08))
             return mode, minutes, _round_money(cost_fn(distance_km))
     return "飞机/高铁", 240, _round_money(280 + distance_km * 0.62)
 

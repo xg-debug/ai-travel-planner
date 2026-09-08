@@ -94,7 +94,13 @@ class TripPlanningJobService:
             job_id,
             step=step,
             message=message,
-            progress=WORKFLOW_STEP_PROGRESS.get(step, 0),
+            progress=max(
+                int(payload.get("progress") or 0),
+                WORKFLOW_STEP_PROGRESS.get(step, 0),
+            ),
+            run_id=payload.get("run_id", ""),
+            event_sequence=payload.get("sequence", 0),
+            detail=payload.get("detail") or {},
         )
 
     def _run(self, job_id: str, state: Dict[str, Any]) -> None:

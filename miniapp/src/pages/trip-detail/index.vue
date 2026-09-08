@@ -21,6 +21,10 @@
       </view>
     </view>
 
+    <view v-if="trip.planningWarnings?.length" style="margin:24rpx;padding:24rpx;background:#fffbeb;color:#92400e;border-radius:16rpx;font-size:26rpx;">
+      <view v-for="warning in trip.planningWarnings" :key="warning">{{ warning }}</view>
+    </view>
+
     <view class="summary-card">
       <view class="summary-item">
         <text class="summary-item__icon summary-item__icon--blue">日</text>

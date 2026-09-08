@@ -41,15 +41,10 @@ LLM_PROVIDERS = {
 }
 
 MAP_PROVIDERS = {
-    "amap_mcp_sse": {
-        "label": "高德地图 MCP SSE",
+    "amap_mcp": {
+        "label": "高德地图 MCP",
         "api_key_setting": "map.amap_mcp.api_key",
         "env_attr": "AMAP_MCP_API_KEY",
-    },
-    "amap": {
-        "label": "高德地图 REST",
-        "api_key_setting": "map.amap.api_key",
-        "env_attr": "AMAP_API_KEY",
     },
     "tencent": {
         "label": "腾讯位置服务",
@@ -134,7 +129,7 @@ def set_setting_value(db: Session, key: str, value: str, updated_by: str | None 
 def get_llm_provider(db: Session | None = None) -> str:
     provider = get_setting_value(db, "llm.provider") if db else get_runtime_setting("llm.provider")
     provider = (provider or settings.DEFAULT_LLM_PROVIDER or "deepseek").strip().lower()
-    return provider if provider in LLM_PROVIDERS else "openai"
+    return provider if provider in LLM_PROVIDERS else "deepseek"
 
 
 def normalize_llm_model(provider: str, model: str | None = None) -> str:
@@ -148,7 +143,10 @@ def normalize_llm_model(provider: str, model: str | None = None) -> str:
 
 def get_llm_model(provider: str | None = None, db: Session | None = None) -> str:
     current_provider = provider or get_llm_provider(db)
-    model = get_setting_value(db, "llm.model") if db else get_runtime_setting("llm.model")
+    read = (lambda key: get_setting_value(db, key)) if db else get_runtime_setting
+    model = read(f"llm.{current_provider}.model")
+    if not model and current_provider == get_llm_provider(db):
+        model = read("llm.model")
     if model and model.strip():
         return normalize_llm_model(current_provider, model)
     if current_provider == settings.DEFAULT_LLM_PROVIDER and settings.DEFAULT_LLM_MODEL:
@@ -166,17 +164,29 @@ def get_llm_api_key(provider: str, db: Session | None = None) -> str | None:
 
 def get_map_provider(db: Session | None = None) -> str:
     provider = get_setting_value(db, "map.provider") if db else get_runtime_setting("map.provider")
-    default_provider = settings.MAP_PROVIDER or ("amap_mcp_sse" if settings.AMAP_MCP_SSE_URL else "amap")
+    default_provider = settings.MAP_PROVIDER or "amap_mcp"
     provider = (provider or default_provider).strip().lower()
-    return provider if provider in MAP_PROVIDERS else "amap"
+    return provider if provider in MAP_PROVIDERS else "amap_mcp"
 
 
 def get_map_api_key(provider: str, db: Session | None = None) -> str | None:
+    if provider in {"amap", "amap_mcp_sse", "amap_mcp"}:
+        read = (lambda key: get_setting_value(db, key)) if db else get_runtime_setting
+        for value in (read("map.amap_mcp.api_key"), settings.AMAP_MCP_API_KEY,
+                      read("map.amap.api_key"), settings.AMAP_API_KEY):
+            if is_present_secret(value):
+                return value
+        return None
     meta = MAP_PROVIDERS.get(provider)
     if not meta:
         return None
     configured = get_setting_value(db, meta["api_key_setting"]) if db else get_runtime_setting(meta["api_key_setting"])
     return configured or getattr(settings, meta["env_attr"], None)
+
+
+def get_amap_mcp_url() -> str:
+    # Old SSE endpoints are deliberately ignored: the official service retired SSE.
+    return get_runtime_setting("map.amap_mcp.url") or settings.AMAP_MCP_URL
 
 
 def get_amap_mcp_sse_url(db: Session | None = None) -> str | None:
@@ -199,6 +209,7 @@ def build_runtime_config_snapshot(db: Session) -> Dict[str, object]:
                     "id": provider_id,
                     "label": meta["label"],
                     "defaultModel": meta["default_model"],
+                    "model": get_llm_model(provider_id, db),
                     "hasKey": is_present_secret(get_llm_api_key(provider_id, db)),
                     "maskedKey": mask_secret(get_llm_api_key(provider_id, db)),
                 }
@@ -214,7 +225,7 @@ def build_runtime_config_snapshot(db: Session) -> Dict[str, object]:
                     "label": meta["label"],
                     "hasKey": is_present_secret(get_map_api_key(provider_id, db)),
                     "maskedKey": mask_secret(get_map_api_key(provider_id, db)),
-                    "hasSseUrl": bool(get_amap_mcp_sse_url(db)) if provider_id == "amap_mcp_sse" else None,
+                    "transport": "streamable_http" if provider_id == "amap_mcp" else None,
                 }
                 for provider_id, meta in MAP_PROVIDERS.items()
             ],
