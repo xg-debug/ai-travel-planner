@@ -5,6 +5,7 @@ import LoginView from '@/views/LoginView.vue'
 import OverviewView from '@/views/OverviewView.vue'
 import TrendView from '@/views/TrendView.vue'
 import UsersView from '@/views/UsersView.vue'
+import AgentRunsView from '@/views/AgentRunsView.vue'
 import { useAuthStore } from '@/stores/authStore'
 
 const router = createRouter({
@@ -39,6 +40,12 @@ const router = createRouter({
           name: 'runtime',
           component: RuntimeStatusView,
           meta: { title: '运行状态 - AI 旅行规划管理后台' }
+        },
+        {
+          path: 'agent-runs',
+          name: 'agent-runs',
+          component: AgentRunsView,
+          meta: { title: 'Agent 轨迹 - AI 旅行规划管理后台' }
         },
         {
           path: 'users',

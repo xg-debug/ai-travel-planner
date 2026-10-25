@@ -12,10 +12,12 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.admin import UserActivityEvent
+from app.models.agent_trace import AgentRun, AgentTraceEvent
 from app.models.trip_plan import TripPlan
 from app.models.user import User
 from app.services.admin_access import AdminPrincipal, require_admin, require_super_admin
 from app.services.runtime_config import (
+    DEEPSEEK_MODELS,
     LLM_PROVIDERS,
     MAP_PROVIDERS,
     build_runtime_config_snapshot,
@@ -33,6 +35,81 @@ from app.services.user_roles import (
 
 
 router = APIRouter()
+
+
+def _agent_run_payload(run: AgentRun) -> dict[str, Any]:
+    duration = run.duration_ms
+    if duration is None and run.status == "running":
+        duration = max(0, int((datetime.utcnow() - run.created_at).total_seconds() * 1000))
+    return {
+        "id": run.id,
+        "jobId": run.job_id,
+        "userId": run.user_id,
+        "source": run.source,
+        "attempt": run.attempt,
+        "city": run.city,
+        "days": run.days,
+        "status": run.status,
+        "errorCode": run.error_code,
+        "resultSummary": run.result_summary,
+        "modelCalls": run.model_calls,
+        "toolCalls": run.tool_calls,
+        "createdAt": run.created_at,
+        "completedAt": run.completed_at,
+        "durationMs": duration,
+    }
+
+
+@router.get("/agent-runs")
+def list_agent_runs(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=50),
+    status: str | None = Query(default=None),
+    search: str | None = Query(default=None, max_length=100),
+    _principal: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    query = select(AgentRun)
+    if status:
+        query = query.where(AgentRun.status == status)
+    if search:
+        pattern = f"%{search.strip()}%"
+        query = query.where((AgentRun.city.like(pattern)) | (AgentRun.job_id.like(pattern)) | (AgentRun.id.like(pattern)))
+    total = db.execute(select(func.count()).select_from(query.subquery())).scalar_one()
+    rows = db.execute(query.order_by(AgentRun.created_at.desc()).offset((page - 1) * page_size).limit(page_size)).scalars().all()
+    return {"items": [_agent_run_payload(row) for row in rows], "total": total, "page": page, "pageSize": page_size}
+
+
+@router.get("/agent-runs/{run_id}")
+def get_agent_run(
+    run_id: str,
+    _principal: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    run = db.get(AgentRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Agent 运行记录不存在")
+    events = db.execute(select(AgentTraceEvent).where(AgentTraceEvent.run_id == run_id).order_by(AgentTraceEvent.id).limit(500)).scalars().all()
+    return {
+        **_agent_run_payload(run),
+        "events": [
+            {
+                "id": item.id,
+                "kind": item.kind,
+                "name": item.name,
+                "status": item.status,
+                "provider": item.provider,
+                "model": item.model,
+                "endpoint": item.endpoint,
+                "durationMs": item.duration_ms,
+                "inputSummary": item.input_summary,
+                "outputSummary": item.output_summary,
+                "errorCode": item.error_code,
+                "createdAt": item.created_at,
+            }
+            for item in events
+        ],
+    }
 
 
 class LLMSettingsUpdate(BaseModel):
@@ -286,6 +363,8 @@ def update_settings(
         if provider not in LLM_PROVIDERS:
             raise HTTPException(status_code=400, detail="不支持的大模型供应商")
         normalized_model = normalize_llm_model(provider, payload.llm.model if payload.llm.model is not None else get_llm_model(provider, db))
+        if provider == "deepseek" and normalized_model not in DEEPSEEK_MODELS:
+            raise HTTPException(status_code=400, detail="DeepSeek 模型须为 deepseek-flash 或 deepseek-v4-pro")
         set_setting_value(db, "llm.provider", provider, principal.user.id)
         if normalized_model:
             set_setting_value(db, "llm.model", normalized_model, principal.user.id)

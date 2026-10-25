@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List
 
-from sqlalchemy import DateTime, ForeignKey, JSON, Numeric, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -24,6 +24,7 @@ class TripPlan(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="planned", index=True)
     cover_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -31,7 +32,9 @@ class TripPlan(Base):
 
     def payload(self) -> Dict[str, Any]:
         try:
-            return json.loads(self.payload_json)
+            data = json.loads(self.payload_json)
+            data["version"] = self.version
+            return data
         except Exception:
             return {}
 

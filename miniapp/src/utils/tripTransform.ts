@@ -424,7 +424,7 @@ const normalizeActivity = (
     duration: Number(activity.duration) || 90,
     cost: Number(activity.cost ?? activity.cost_estimate ?? activity.total_cost ?? activity.totalCost ?? 0) || 0,
     ticketPrice,
-    ticketLabel: buildTicketLabel(activity, poi, ticketPrice),
+    ticketLabel: buildTicketLabel(activity, poi, ticketPrice, normalizedType),
     openingHours,
     priceNote,
     notes,
@@ -652,14 +652,12 @@ const firstPositiveNumber = (...values: unknown[]): number | undefined => {
 }
 
 const normalizeTicketPrice = (activity: any, poi: any, type: Activity['type']): number | undefined => {
+  if (type === 'food' || type === 'transport') return undefined
+  if (activity.ticket_is_free === true || activity.ticketIsFree === true) return 0
   const explicit = parseNumericPrice(activity.ticket_price ?? activity.ticketPrice)
-  if (explicit !== undefined) return ['food', 'transport'].includes(type) ? undefined : explicit
+  if (explicit !== undefined && explicit > 0) return explicit
   const poiPrice = parseNumericPrice(poi?.price)
-  if (poiPrice !== undefined && ['culture', 'outdoor', 'entertainment', 'other'].includes(type)) return poiPrice
-  if (Number(activity.cost_estimate ?? activity.cost) === 0) return 0
-  return ['culture', 'outdoor', 'entertainment', 'other'].includes(type)
-    ? parseNumericPrice(activity.cost_estimate ?? activity.cost)
-    : undefined
+  return poiPrice !== undefined && poiPrice > 0 ? poiPrice : undefined
 }
 
 const parseNumericPrice = (value: unknown): number | undefined => {
@@ -668,8 +666,8 @@ const parseNumericPrice = (value: unknown): number | undefined => {
   return match ? Number(match[0]) : undefined
 }
 
-const buildTicketLabel = (activity: any, poi: any, ticketPrice?: number): string | undefined => {
-  if (ticketPrice === undefined) return undefined
+const buildTicketLabel = (activity: any, poi: any, ticketPrice: number | undefined, type: Activity['type']): string | undefined => {
+  if (ticketPrice === undefined) return ['culture', 'outdoor', 'entertainment'].includes(type) ? '门票待核实' : undefined
   if (ticketPrice <= 0) return '门票免费'
   const raw = String(activity.ticket_note || poi?.price || '').trim()
   return raw && raw !== '0' ? `门票 ${raw}` : `门票 ¥${ticketPrice}`

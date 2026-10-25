@@ -54,6 +54,7 @@ export interface TripDay {
   hotel?: HotelRecommendation
   notes?: string
   totalCost?: number
+  routeNeedsRefresh?: boolean
 }
 
 export interface WeatherForecast {
@@ -108,6 +109,7 @@ export interface BudgetBreakdown {
 }
 
 export interface Trip {
+  version?: number
   planningWarnings?: string[]
   id: string
   destination: string

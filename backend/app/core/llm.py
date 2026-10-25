@@ -1,5 +1,6 @@
 from typing import Any, Generator, Optional
 import logging
+import time
 from app.core.config import settings
 from app.services.runtime_config import get_llm_api_key, get_llm_model, get_llm_provider, is_present_secret
 
@@ -90,7 +91,7 @@ class LLMFactory:
             from langchain_core.utils import convert_to_secret_str
             return ChatOpenAI(
                 api_key=convert_to_secret_str(api_key),
-                base_url="https://api.deepseek.com/v1",
+                base_url="https://api.deepseek.com",
                 model=model,
                 temperature=temperature,
                 timeout=request_timeout,
@@ -146,7 +147,10 @@ def invoke_llm_with_fallback(
     request_timeout: Optional[int] = None,
     max_retries: Optional[int] = None,
     provider_order: Optional[list[str]] = None,
+    operation: str = "llm",
 ):
+    from app.trip_planning.trace import record_event, safe_text
+
     default_provider = get_llm_provider()
     providers = provider_order or [default_provider]
     unique_providers = []
@@ -157,18 +161,44 @@ def invoke_llm_with_fallback(
     errors: list[str] = []
     for provider in unique_providers:
         llm = _try_create_llm(provider, temperature, max_tokens, request_timeout, max_retries, default_provider)
+        model = _resolve_model(provider, get_llm_model(provider))
+        endpoint = {
+            "deepseek": "api.deepseek.com", "openai": "api.openai.com",
+            "anthropic": "api.anthropic.com", "google": "generativelanguage.googleapis.com",
+        }.get(provider)
         if not llm:
+            record_event("model", operation, "skipped", provider=provider, model=model, endpoint=endpoint, error_code="LLM_NOT_CONFIGURED")
             continue
+        started = time.perf_counter()
         try:
             logger.info("Invoking LLM provider=%s", provider)
             response = llm.invoke(prompt)
             if isinstance(getattr(response, "content", None), list):
                 response = response.model_copy(update={"content": _message_text(response)})
+            metadata = getattr(response, "response_metadata", None) or {}
+            record_event(
+                "model", operation, "completed", provider=provider, model=model, endpoint=endpoint,
+                duration_ms=round((time.perf_counter() - started) * 1000),
+                input_summary={"prompt_chars": len(prompt), "max_tokens": max_tokens, "temperature": temperature},
+                output_summary={
+                    "response_chars": len(_message_text(response)),
+                    "preview": safe_text(_message_text(response), 240),
+                    "usage": getattr(response, "usage_metadata", None) or {},
+                    "finish_reason": metadata.get("finish_reason"),
+                },
+            )
             return response
         except Exception as exc:
             err = f"{provider}: {exc}"
             errors.append(err)
-            logger.warning("LLM provider failed: %s", err)
+            logger.warning("LLM provider failed provider=%s type=%s", provider, type(exc).__name__)
+            record_event(
+                "model", operation, "failed", provider=provider, model=model, endpoint=endpoint,
+                duration_ms=round((time.perf_counter() - started) * 1000),
+                input_summary={"prompt_chars": len(prompt), "max_tokens": max_tokens},
+                output_summary={"error_type": type(exc).__name__},
+                error_code=type(exc).__name__,
+            )
             continue
 
     if not errors:

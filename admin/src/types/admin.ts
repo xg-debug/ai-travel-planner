@@ -84,6 +84,7 @@ export interface ProviderOption {
   id: string
   label: string
   defaultModel?: string
+  models?: string[]
   model?: string
   hasKey: boolean
   maskedKey?: string | null
@@ -106,4 +107,48 @@ export interface RuntimeStatus {
     mapConfigured: boolean
     warnings: string[]
   }
+}
+
+export interface AgentTraceEvent {
+  id: number
+  kind: 'phase' | 'model' | 'tool' | 'decision' | 'checkpoint' | 'result'
+  name: string
+  status: string
+  provider?: string | null
+  model?: string | null
+  endpoint?: string | null
+  durationMs?: number | null
+  inputSummary?: Record<string, unknown> | null
+  outputSummary?: Record<string, unknown> | null
+  errorCode?: string | null
+  createdAt: string
+}
+
+export interface AgentRun {
+  id: string
+  jobId?: string | null
+  userId?: string | null
+  source: string
+  attempt: number
+  city: string
+  days: number
+  status: string
+  errorCode?: string | null
+  resultSummary?: Record<string, unknown> | null
+  modelCalls: number
+  toolCalls: number
+  createdAt: string
+  completedAt?: string | null
+  durationMs?: number | null
+}
+
+export interface AgentRunDetail extends AgentRun {
+  events: AgentTraceEvent[]
+}
+
+export interface AgentRunPage {
+  items: AgentRun[]
+  total: number
+  page: number
+  pageSize: number
 }

@@ -6,11 +6,12 @@ export interface ForgotPasswordResponse {
   reset_token?: string | null
 }
 
-type PlanJobStatus = 'running' | 'completed' | 'failed'
+type PlanJobStatus = 'queued' | 'running' | 'completed' | 'failed'
 
 interface PlanJobStartResponse {
   job_id: string
   status: PlanJobStatus
+  guest_token?: string
 }
 
 export interface PlanJobResponse {
@@ -53,6 +54,7 @@ type ChunkedRequestTask = UniApp.RequestTask & {
 
 const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 const PLAN_JOB_MAX_WAIT_MS = 30 * 60 * 1000
+const ACTIVE_PLAN_JOB_KEY = 'cybertravel_active_plan_job'
 const PLAN_JOB_POLL_INTERVAL_INITIAL_MS = 1000
 const PLAN_JOB_POLL_INTERVAL_MS = 2500
 
@@ -140,16 +142,35 @@ export const tripApi = {
     })
   },
 
-  getPlanTripJob(jobId: string) {
+  getPlanTripJob(jobId: string, guestToken?: string) {
     return request<PlanJobResponse>({
       url: `/trip/planning/jobs/${jobId}`,
-      timeout: 30000
+      timeout: 30000,
+      headers: guestToken ? { 'X-Planning-Token': guestToken } : {}
     })
   },
 
   async planTripWithPolling(payload: PlanTripRequest, onProgress?: (job: PlanJobResponse) => void) {
-    const started = await this.startPlanTripJob(payload)
-    if (!started.job_id) throw new Error('规划任务启动失败，请稍后重试')
+    const requestKey = JSON.stringify(payload)
+    const saved = uni.getStorageSync(ACTIVE_PLAN_JOB_KEY) as { requestKey?: string; jobId?: string; guestToken?: string } | null
+    let jobId = saved?.requestKey === requestKey ? String(saved?.jobId || '') : ''
+    let guestToken = saved?.requestKey === requestKey ? String(saved?.guestToken || '') : ''
+    if (jobId) {
+      try {
+        await this.getPlanTripJob(jobId, guestToken)
+      } catch (error) {
+        if (!String(error).includes('不存在或已过期')) throw error
+        jobId = ''
+        uni.removeStorageSync(ACTIVE_PLAN_JOB_KEY)
+      }
+    }
+    if (!jobId) {
+      const started = await this.startPlanTripJob(payload)
+      if (!started.job_id) throw new Error('规划任务启动失败，请稍后重试')
+      jobId = started.job_id
+      guestToken = started.guest_token || ''
+      uni.setStorageSync(ACTIVE_PLAN_JOB_KEY, { requestKey, jobId, guestToken })
+    }
 
     const deadline = Date.now() + PLAN_JOB_MAX_WAIT_MS
     let pollingFailures = 0
@@ -161,7 +182,7 @@ export const tripApi = {
       await wait(interval)
       let job: PlanJobResponse
       try {
-        job = await this.getPlanTripJob(started.job_id)
+        job = await this.getPlanTripJob(jobId, guestToken)
         pollingFailures = 0
       } catch (error) {
         pollingFailures += 1
@@ -171,9 +192,11 @@ export const tripApi = {
       onProgress?.(job)
       if (job.status === 'completed') {
         if (!job.result) throw new Error('规划任务已完成，但未返回行程结果')
+        uni.removeStorageSync(ACTIVE_PLAN_JOB_KEY)
         return job.result
       }
       if (job.status === 'failed') {
+        uni.removeStorageSync(ACTIVE_PLAN_JOB_KEY)
         throw createPlanningError({
           message: job.error || '行程规划失败，请稍后重试',
           code: job.error_code,

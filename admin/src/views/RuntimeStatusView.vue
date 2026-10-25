@@ -42,11 +42,17 @@
                 <a-select v-model:value="llmForm.provider" size="large" :options="llmOptions" />
               </a-form-item>
               <a-form-item label="模型名称" name="model" >
-                <a-input
+                <a-select
+                  v-if="isDeepseekProvider"
                   v-model:value="llmForm.model"
                   size="large"
-                  :disabled="isDeepseekProvider"
-                  :placeholder="llmModelPlaceholder"
+                  :options="deepseekModelOptions"
+                />
+                <a-input
+                  v-else
+                  v-model:value="llmForm.model"
+                  size="large"
+                  placeholder="例如 gpt-4o-mini"
                 />
               </a-form-item>
               <a-form-item label="API Key" name="apiKey" extra="已配置时留空可保留原 Key。">
@@ -115,7 +121,6 @@ const loading = ref(false)
 const savingLlm = ref(false)
 const savingMap = ref(false)
 const status = ref<RuntimeStatus | null>(null)
-const fixedDeepseekModel = 'deepseek-v4-flash'
 
 const llmForm = reactive({
   provider: '',
@@ -152,8 +157,8 @@ const selectedMapProvider = computed(() =>
 
 const isDeepseekProvider = computed(() => llmForm.provider === 'deepseek')
 
-const llmModelPlaceholder = computed(() =>
-  isDeepseekProvider.value ? fixedDeepseekModel : '例如 gpt-4o-mini'
+const deepseekModelOptions = computed(() =>
+  (selectedLlmProvider.value?.models || []).map((model) => ({ label: model, value: model }))
 )
 
 const llmKeyPlaceholder = computed(() =>
@@ -167,7 +172,7 @@ const mapKeyPlaceholder = computed(() =>
 const syncForms = () => {
   if (!status.value) return
   llmForm.provider = status.value.llm.provider
-  llmForm.model = status.value.llm.provider === 'deepseek' ? fixedDeepseekModel : status.value.llm.model
+  llmForm.model = status.value.llm.model
   llmForm.apiKey = ''
   mapForm.provider = status.value.map.provider
   mapForm.apiKey = ''
@@ -175,7 +180,7 @@ const syncForms = () => {
 
 watch(() => llmForm.provider, (provider) => {
   const saved = status.value?.llm.providers.find(item => item.id === provider)
-  llmForm.model = provider === 'deepseek' ? fixedDeepseekModel : saved?.model || saved?.defaultModel || ''
+  llmForm.model = saved?.model || saved?.defaultModel || ''
   llmForm.apiKey = ''
 }, { flush: 'sync' })
 
@@ -197,7 +202,7 @@ const saveLlm = async () => {
     await adminApi.updateSettings({
       llm: {
         provider: llmForm.provider,
-        model: isDeepseekProvider.value ? fixedDeepseekModel : llmForm.model,
+        model: llmForm.model,
         api_key: llmForm.apiKey
       }
     })

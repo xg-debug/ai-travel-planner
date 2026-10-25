@@ -41,7 +41,7 @@ def _try_init_redis() -> bool:
         _redis_client = redis.Redis.from_url(settings.REDIS_URL, socket_connect_timeout=2, decode_responses=True)
         _redis_client.ping()
         _redis_available = True
-        logger.info("Redis cache connected at %s", settings.REDIS_URL)
+        logger.info("Redis cache connected")
         return True
     except Exception:
         logger.debug("Redis not available, using in-memory cache")

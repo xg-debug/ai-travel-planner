@@ -4,6 +4,8 @@ import logging
 from typing import Any, Dict, List
 
 from app.core.llm import invoke_llm_with_fallback
+from app.domain.travel_domain import normalize_image_url
+from app.trip_planning.candidates import filter_real_candidates
 from app.trip_planning.graph_state import TripPlanningGraphState
 from app.trip_planning.itinerary import (
     enrich_activity_with_poi,
@@ -13,7 +15,7 @@ from app.trip_planning.itinerary import (
 )
 from app.trip_planning.prompts import build_finalizer_prompt, build_planner_prompt, build_replanner_prompt
 from app.trip_planning.tool_executor import TripPlanningToolbox, finalize_budget_and_risk
-from app.trip_planning.utils import extract_json_block
+from app.trip_planning.utils import compact_name, extract_json_block
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,7 @@ def planner_node(state: TripPlanningGraphState) -> Dict[str, Any]:
         max_tokens=1800,
         request_timeout=35,
         max_retries=0,
+        operation="planner",
     )
     parsed = extract_json_block(getattr(response, "content", response)) or {}
     if not isinstance(parsed, dict):
@@ -70,6 +73,7 @@ def replanner_node(state: TripPlanningGraphState) -> Dict[str, Any]:
         max_tokens=1200,
         request_timeout=30,
         max_retries=0,
+        operation="replanner",
     )
     parsed = extract_json_block(getattr(response, "content", response)) or {}
     if not isinstance(parsed, dict):
@@ -96,6 +100,7 @@ def finalizer_node(state: TripPlanningGraphState) -> Dict[str, Any]:
         max_tokens=_finalizer_tokens(state),
         request_timeout=90,
         max_retries=0,
+        operation="finalizer",
     )
     parsed = extract_json_block(getattr(response, "content", response)) or {}
     itinerary = parsed.get("itinerary") if isinstance(parsed, dict) else []
@@ -112,7 +117,6 @@ def finalizer_node(state: TripPlanningGraphState) -> Dict[str, Any]:
     next_state.update(budget_risk)
     if not next_state.get("final_output"):
         next_state.update(summary_node(next_state))
-    next_state["quality_score"] = _quality_score(next_state)
     return {
         "plan": next_state.get("plan", plan),
         "final_output": next_state.get("final_output", ""),
@@ -120,7 +124,6 @@ def finalizer_node(state: TripPlanningGraphState) -> Dict[str, Any]:
         "daily_budgets": next_state.get("daily_budgets", []),
         "risk_notices": next_state.get("risk_notices", []),
         "intercity_transport": next_state.get("intercity_transport", state.get("intercity_transport", {})),
-        "quality_score": next_state.get("quality_score", {}),
     }
 
 
@@ -187,36 +190,68 @@ def _finalizer_tokens(state: Dict[str, Any]) -> int:
 
 def _attach_consistent_hotels(plan: List[Dict[str, Any]], hotels: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not hotels:
+        for day in plan:
+            day["hotel_recommendation"] = {}
         return plan
     primary = hotels[0]
     for day in plan:
         hotel = day.get("hotel_recommendation") or {}
-        if not hotel.get("name"):
-            day["hotel_recommendation"] = _hotel_for_day(primary)
-            continue
         matched = next((item for item in hotels if str(item.get("name")) == str(hotel.get("name"))), None)
-        if matched:
-            day["hotel_recommendation"] = {**_hotel_for_day(matched), **hotel}
-            day["hotel_recommendation"]["price_is_estimated"] = True
+        # The finalizer may invent a hotel or overwrite a verified candidate's
+        # source/coordinates. Always use the selected candidate as the truth.
+        day["hotel_recommendation"] = _hotel_for_day(matched or primary)
     return plan
 
 
 def _enrich_plan_media(plan: List[Dict[str, Any]], state: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Restore verified POI metadata that an LLM finalizer may omit."""
-    used_names: set[str] = set()
+    """Restore verified POI metadata and remove repeated activity locations."""
+    used_poi_names: set[str] = set()
+    used_location_keys: set[str] = set()
     city = str(state.get("city") or "").strip()
     for day in plan:
         activities: List[Dict[str, Any]] = []
         for activity in day.get("activities") or []:
-            poi = select_state_candidate_for_activity(state, activity, used_names)
+            duplicate_requested_location = _activity_key(activity, city) in used_location_keys
+            poi = select_state_candidate_for_activity(state, activity, used_poi_names)
+            if not poi and duplicate_requested_location:
+                poi = _first_unused_candidate(state, used_location_keys, activity)
             if poi:
                 activity = enrich_activity_with_poi(activity, poi, city)
                 name = str(poi.get("name") or "").strip()
                 if name:
-                    used_names.add(name)
+                    used_poi_names.add(name)
+            else:
+                activity.pop("image", None)
+                activity.pop("image_url", None)
+                activity.pop("image_source_id", None)
+                activity.pop("image_source_name", None)
+            key = _activity_key(activity, city)
+            if key and key in used_location_keys:
+                continue
+            if key:
+                used_location_keys.add(key)
             activities.append(activity)
         day["activities"] = activities
     return plan
+
+
+def _first_unused_candidate(state: Dict[str, Any], used_keys: set[str], activity: Dict[str, Any]) -> Dict[str, Any] | None:
+    activity_text = " ".join(str(activity.get(key) or "") for key in ("type", "title"))
+    if any(token in activity_text for token in ("美食", "餐饮", "早餐", "午餐", "晚餐")):
+        pool_name = "food_candidates"
+    elif any(token in activity_text for token in ("景点", "游览", "文化", "户外", "休闲")):
+        pool_name = "attraction_candidates"
+    else:
+        return None
+    for item in filter_real_candidates(state.get(pool_name, []) or []):
+        name = str((item or {}).get("name") or "").strip()
+        if name and _activity_key({"location": name}, str(state.get("city") or "")) not in used_keys:
+            return item
+    return None
+
+
+def _activity_key(activity: Dict[str, Any], city: str) -> str:
+    return compact_name(str(activity.get("location") or activity.get("title") or ""), city)
 
 
 def _hotel_for_day(hotel: Dict[str, Any]) -> Dict[str, Any]:
@@ -233,9 +268,11 @@ def _hotel_for_day(hotel: Dict[str, Any]) -> Dict[str, Any]:
     }
     if lat and lng:
         result["coordinates"] = {"lat": lat, "lng": lng}
-    image_url = str(hotel.get("image_url") or hotel.get("image") or "").strip()
+    image_url = normalize_image_url(hotel.get("image_url") or hotel.get("image"))
     if image_url:
         result["image"] = image_url
+        result["image_source_id"] = result["source_id"]
+        result["image_source_name"] = result["name"]
     return result
 
 
@@ -245,9 +282,13 @@ def _fallback_itinerary(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     foods = list(state.get("food_candidates") or [])
     hotels = list(state.get("hotel_options") or [])
     plan: List[Dict[str, Any]] = []
+    attraction_cursor = 0
+    food_cursor = 0
     for index in range(days):
-        day_attractions = attractions[index * 2 : index * 2 + 2] or attractions[:2]
-        day_foods = foods[index * 2 : index * 2 + 2] or foods[:2]
+        day_attractions = attractions[attraction_cursor : attraction_cursor + 2]
+        attraction_cursor += len(day_attractions)
+        day_foods = foods[food_cursor : food_cursor + 2]
+        food_cursor += len(day_foods)
         activities: List[Dict[str, Any]] = []
         if day_attractions:
             activities.append(_activity_from_candidate(day_attractions[0], "09:30-11:30", "景点游览"))
@@ -296,19 +337,3 @@ def _activity_from_candidate(item: Dict[str, Any], time: str, activity_type: str
     if image_url:
         activity["image"] = image_url
     return activity
-
-
-def _quality_score(state: Dict[str, Any]) -> Dict[str, Any]:
-    plan = state.get("plan", []) or []
-    locations = [
-        str(activity.get("location") or "").strip()
-        for day in plan
-        for activity in (day.get("activities") or [])
-        if str(activity.get("location") or "").strip()
-    ]
-    unique_ratio = len(set(locations)) / max(len(locations), 1)
-    return {
-        "score": round(70 + unique_ratio * 25, 1),
-        "unique_location_ratio": round(unique_ratio, 2),
-        "review": "Plan-Execute-Replan 工作流已完成基础质量检查。",
-    }

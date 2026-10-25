@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 import uuid
+from contextvars import copy_context
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Generator, Protocol
 
@@ -90,8 +91,9 @@ class TripPlanningHarness:
             finally:
                 events.put(_END)
 
+        context = copy_context()
         threading.Thread(
-            target=worker,
+            target=lambda: context.run(worker),
             name=f"trip-planning-{run_id[:8]}",
             daemon=True,
         ).start()

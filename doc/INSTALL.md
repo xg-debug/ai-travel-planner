@@ -7,7 +7,7 @@
 | Python  | ≥ 3.12      | 后端运行环境                    |
 | Node.js | ≥ 18（推荐 24） | 小程序构建                     |
 | MySQL   | 8.0+        | 主数据库，需启用 utf8mb4          |
-| Redis   | 6.0+        | 缓存（可选，无 Redis 时自动降级为内存缓存） |
+| Redis   | 6.0+        | POI 与路线查询缓存；规划任务状态由 MySQL 保存 |
 | npm     | 最新稳定版       | 包管理器                      |
 
 ***
@@ -50,21 +50,29 @@ sudo systemctl start mysql
 mysql -u root -p < backend/schema.sql
 ```
 
-以上命令会创建 `ai_travel_planner` 数据库及三张核心表：
+以上命令会创建 `ai_travel_planner` 数据库及核心表：
 
 | 表名                      | 说明     |
 | ----------------------- | ------ |
 | `users`                 | 用户账户   |
 | `trip_plans`            | 行程计划   |
+| `planning_jobs`         | 规划任务、租约和检查点 |
+| `agent_runs`            | 每次 Agent 运行和重试的汇总 |
+| `agent_trace_events`    | 模型、工具、阶段和结果事件 |
 | `password_reset_tokens` | 密码重置令牌 |
 
 > 启动时后端还会通过 SQLAlchemy 自动创建 `user_roles`、`runtime_settings`、`user_activity_events` 表。
 
-### 1.3 运行迁移（可选）
+### 1.3 现有数据库迁移
 
 ```bash
 mysql -u root -p ai_travel_planner < backend/migrations/2026-04-21_unify_trip_plan_storage.sql
+mysql -u root -p ai_travel_planner < backend/migrations/2026-10-25_planning_jobs.sql
+mysql -u root -p ai_travel_planner < backend/migrations/2026-10-25_trip_plan_version.sql
+mysql -u root -p ai_travel_planner < backend/migrations/2026-10-25_agent_traces.sql
 ```
+
+新数据库已由 `schema.sql` 创建这些表和字段，无须重复执行新迁移。
 
 ***
 
@@ -109,7 +117,7 @@ GOOGLE_API_KEY=xxxxxxxx             # Google Gemini
 
 # 默认使用的 LLM
 DEFAULT_LLM_PROVIDER=deepseek
-DEFAULT_LLM_MODEL=deepseek-v4-flash
+DEFAULT_LLM_MODEL=deepseek-flash
 
 # 地图服务（POI、天气等使用高德官方 MCP Streamable HTTP）
 MAP_PROVIDER=amap_mcp
@@ -129,6 +137,8 @@ UNSPLASH_ACCESS_KEY=xxxxxxxx
 UNSPLASH_SECRET_KEY=xxxxxxxx
 ```
 
+规划任务进度、结果、阶段检查点和 Agent 运行轨迹写入 MySQL。Web 与小程序可通过任务 ID 查询进度；独立 Worker 通过租约领取任务，进程中断后可从已保存的检查点继续。Redis 只用于 POI 与路线查询缓存。
+
 **完整环境变量参考：**
 
 | 变量                                        | 默认值                             | 说明                  |
@@ -136,7 +146,7 @@ UNSPLASH_SECRET_KEY=xxxxxxxx
 | `DEBUG`                                   | `false`                         | 调试模式                |
 | `HOST`                                    | `0.0.0.0`                       | 监听地址                |
 | `PORT`                                    | `8000`                          | 监听端口                |
-| `CORS_ORIGINS`                            | `localhost:3000,localhost:5173` | 允许跨域的来源             |
+| `CORS_ORIGINS`                            | 本地 Web 地址列表                    | 允许跨域的来源，环境变量使用 JSON 数组    |
 | `DATABASE_URL`                            | —                               | MySQL 连接串           |
 | `REDIS_URL`                               | `redis://localhost:6379/0`      | Redis 连接串           |
 | `SECRET_KEY`                              | —                               | JWT 签名密钥            |
@@ -170,6 +180,14 @@ UNSPLASH_SECRET_KEY=xxxxxxxx
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+在另一终端启动规划 Worker（Web 和小程序的异步规划必须运行）：
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.trip_planning.worker
+```
+
 生产模式（推荐使用 gunicorn）：
 
 ```bash
@@ -180,7 +198,7 @@ gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000
 ### 2.5 验证
 
 ```bash
-curl http://localhost:8000/api/trip/health
+curl http://localhost:8000/api/health
 # 返回: {"status": "healthy"}
 
 # 访问 API 文档

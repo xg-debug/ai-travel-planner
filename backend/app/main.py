@@ -46,7 +46,7 @@ app = FastAPI(
 # 允许前端跨域
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS + ["*"],  # 开发环境允许所有来源
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -82,6 +82,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   RobotOutlined,
+  ApartmentOutlined,
   TeamOutlined
 } from '@ant-design/icons-vue'
 import { useAuthStore } from '@/stores/authStore'
@@ -116,6 +117,11 @@ const menuItems = computed<ItemType[]>(() => {
       key: 'runtime',
       icon: () => h(RobotOutlined),
       label: '运行状态'
+    },
+    {
+      key: 'agent-runs',
+      icon: () => h(ApartmentOutlined),
+      label: 'Agent 轨迹'
     }
   ]
 

@@ -1,5 +1,7 @@
 # 随心游智能旅游规划助手详细设计文档
 
+> 实现状态说明（2026-10-25）：下文的 MCP ReAct 入口是早期目标设计。当前默认规划使用 `PlanExecuteReplanAgent`，第一轮查询后只在候选不足时定向补查，预算超额时可尝试一次调整；异步任务由独立 Worker 执行并写入 MySQL 检查点。同步接口仍使用 `TripPlanningWorkflow → TripPlanningHarness`。以代码和 README 的当前架构说明为准。
+
 ## 1. 文档信息
 
 | 项目 | 内容 |

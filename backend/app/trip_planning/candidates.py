@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import re
 from typing import Any, Dict, Iterable, List, Sequence
+from urllib.parse import urlparse
+
+from app.domain.travel_domain import normalize_image_url
 
 from app.trip_planning.utils import compact_name, dedupe
 
@@ -176,8 +179,7 @@ def score_general_candidate(item: Dict[str, Any], city: str, query: str, hotel: 
         score += 0.8
     if item.get("lat") not in (None, 0, 0.0) and item.get("lng") not in (None, 0, 0.0):
         score += 0.6
-    if item.get("image_url"):
-        score += 0.3
+    score += image_quality_score(item) / 10
     if hotel and str(item.get("price", "")).strip():
         score += 0.4
     elif str(item.get("opening_hours", "")).strip():
@@ -189,10 +191,23 @@ def candidate_quality(item: Dict[str, Any]) -> float:
     return (
         safe_float(item.get("score"), 0.0)
         + safe_float(item.get("rating"), 0.0) * 10
-        + (3 if item.get("image_url") else 0)
+        + image_quality_score(item)
         + (2 if item.get("address") else 0)
         + (2 if item.get("lat") not in (None, "", 0, 0.0) and item.get("lng") not in (None, "", 0, 0.0) else 0)
     )
+
+
+def image_quality_score(item: Dict[str, Any]) -> float:
+    url = normalize_image_url(item.get("image_url") or item.get("image"))
+    if not url:
+        return 0.0
+    host = urlparse(url).netloc.lower()
+    score = 3.0
+    if host.endswith("amap.com") or host.endswith("autonavi.com"):
+        score += 2.0
+    if any(token in url.lower() for token in ("placeholder", "default", "blank", "logo")):
+        score -= 2.0
+    return max(score, 0.0)
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:

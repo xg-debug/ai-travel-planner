@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Sequence
 
-from app.trip_planning.candidates import dedupe_candidates_by_name
+from app.domain.travel_domain import normalize_image_url
+from app.trip_planning.candidates import dedupe_candidates_by_name, image_quality_score
 from app.trip_planning.utils import compact_name
 
 
@@ -87,12 +88,16 @@ def _recommendation_item_detail(item: Dict[str, Any]) -> Dict[str, Any]:
         "opening_hours",
         "best_time",
         "tips",
-        "image_url",
         "source",
     ):
         value = item.get(key)
         if value not in (None, "", []):
             detail[key] = value
+    image_url = normalize_image_url(item.get("image_url") or item.get("image"))
+    if image_url:
+        detail["image_url"] = image_url
+        detail["image_source_id"] = str(item.get("id") or item.get("source_id") or "").strip()
+        detail["image_source_name"] = str(item.get("name") or item.get("title") or "").strip()
     return detail
 
 
@@ -139,7 +144,7 @@ def _display_quality(item: Dict[str, Any]) -> float:
     return (
         number(item.get("score"))
         + number(item.get("rating")) * 10
-        + (5 if item.get("image_url") else 0)
+        + image_quality_score(item)
         + (2 if item.get("opening_hours") else 0)
     )
 

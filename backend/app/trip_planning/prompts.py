@@ -112,7 +112,9 @@ def build_finalizer_prompt(state: Dict[str, Any]) -> str:
         "foods": _top_items(state.get("food_candidates", []) or [], max(10, days * 3)),
         "hotels": _top_items(state.get("hotel_options", []) or [], 6),
         "intercity_transport": state.get("intercity_transport", {}),
+        "budget_envelope": state.get("budget_envelope", {}),
         "replanner_reason": state.get("replanner_reason", ""),
+        "budget_repair_instruction": state.get("budget_repair_instruction", ""),
     }
     return f"""你是旅行规划 Finalizer。请基于工具结果生成最终每日行程。
 
@@ -129,6 +131,8 @@ def build_finalizer_prompt(state: Dict[str, Any]) -> str:
 - 不要把高德地点参考消费当作酒店实时房价或景区实时票价。
 - accommodation_preference 为 budget/mid-range/luxury 时，分别对应经济/中档/高档住宿，并在 reason 中说明匹配理由。
 - 若 budget_amount > 0，总预算尽量贴近预算但不强行编低价格。
+- budget_envelope 是估算分配额度，不是酒店实时报价；若固定交通已超目标，请明确说明预算不可行。
+- 若 budget_repair_instruction 非空，优先用已有候选中较低成本的可替换项调整，保留用户明确要求，不要改写候选价格。
 - 所有文字用简体中文，只返回合法 JSON。
 
 上下文：

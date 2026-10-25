@@ -357,6 +357,7 @@ def _plan_with_llm(
             max_tokens=1800,
             request_timeout=60,
             max_retries=1,
+            operation="intercity_transport",
         )
         parsed = _extract_json(_message_text(response))
         outbound = _normalize_llm_leg(
@@ -762,7 +763,7 @@ def _leg_from_options(
         "estimated": True,
         "cost_pending": False,
         "source": source,
-        "note": str(best_option.get("reason") or "由大模型根据出发地、目的地、预算和日期估算，建议出行前核对实时班次与票价。").strip(),
+        "note": str(best_option.get("reason") or "根据地图路线距离估算时间和费用，非实时班次与票价，请在购票前核对。").strip(),
         "best_option": dict(best_option),
         "alternatives": [dict(item) for item in alternatives],
         "options": options,

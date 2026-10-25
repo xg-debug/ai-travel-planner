@@ -38,6 +38,13 @@ class BudgetService:
         breakdown = self._calculate_breakdown_from_itinerary(itinerary, travelers, base_budget)
         daily_budgets = self._calculate_daily_budgets(itinerary, travelers, base_budget)
         self._merge_intercity_transport_cost(breakdown, daily_budgets, intercity_transport)
+        if daily_budgets:
+            # The daily estimate is what users inspect and edit. Keep the
+            # overview derived from those same category amounts.
+            breakdown = {
+                category: sum(int(day["categories"].get(category) or 0) for day in daily_budgets)
+                for category in breakdown
+            }
         total = sum(int(value) for value in breakdown.values())
         activity_adjustment = self._calculate_activity_adjustment(itinerary)
         
@@ -144,10 +151,11 @@ class BudgetService:
             "shopping": 0.0,
         }
 
-        for day in itinerary:
-            hotel = day.get("hotel_recommendation") or day.get("hotel") or {}
-            hotel_price = self._hotel_budget_price(hotel)
-            breakdown["accommodation"] += self._hotel_total_for_day(hotel_price, travelers, base_budget)
+        for day_index, day in enumerate(itinerary):
+            if day_index < len(itinerary) - 1:
+                hotel = day.get("hotel_recommendation") or day.get("hotel") or {}
+                hotel_price = self._hotel_budget_price(hotel)
+                breakdown["accommodation"] += self._hotel_total_for_day(hotel_price, travelers, base_budget)
 
             for activity in day.get("activities", []) or []:
                 if activity.get("is_intercity_transport"):
@@ -190,9 +198,10 @@ class BudgetService:
                 "tickets": 0.0,
                 "shopping": 0.0,
             }
-            hotel = day.get("hotel_recommendation") or day.get("hotel") or {}
-            hotel_price = self._hotel_budget_price(hotel)
-            categories["accommodation"] = self._hotel_total_for_day(hotel_price, travelers, base_budget)
+            if index < len(itinerary) - 1:
+                hotel = day.get("hotel_recommendation") or day.get("hotel") or {}
+                hotel_price = self._hotel_budget_price(hotel)
+                categories["accommodation"] = self._hotel_total_for_day(hotel_price, travelers, base_budget)
 
             for activity in day.get("activities", []) or []:
                 if activity.get("is_intercity_transport"):
@@ -268,7 +277,7 @@ class BudgetService:
         inbound = intercity_transport.get("inbound") or {}
         outbound_cost = int(self._safe_number(outbound.get("total_cost")))
         inbound_cost = int(self._safe_number(inbound.get("total_cost")))
-        total_cost = int(self._safe_number(intercity_transport.get("total_cost"))) or outbound_cost + inbound_cost
+        total_cost = max(int(self._safe_number(intercity_transport.get("total_cost"))), outbound_cost + inbound_cost)
         if total_cost <= 0:
             return
 
@@ -280,6 +289,9 @@ class BudgetService:
             self._add_daily_transport_cost(daily_budgets[0], outbound_cost, "intercity_outbound")
         if inbound_cost > 0:
             self._add_daily_transport_cost(daily_budgets[-1], inbound_cost, "intercity_inbound")
+        unallocated_cost = total_cost - outbound_cost - inbound_cost
+        if unallocated_cost > 0:
+            self._add_daily_transport_cost(daily_budgets[0], unallocated_cost, "intercity_other")
 
     def _add_daily_transport_cost(self, daily_budget: Dict[str, Any], cost: int, risk: str) -> None:
         categories = dict(daily_budget.get("categories") or {})

@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, List, Sequence
 
 from app.core.config import settings
+from app.domain.travel_domain import normalize_image_url
 from app.trip_planning.candidates import (
     build_source_metadata,
     candidate_has_real_source,
@@ -43,7 +44,10 @@ def normalize_itinerary(plan: Sequence[Dict[str, Any]], state: Dict[str, Any]) -
             next_activity.setdefault("location", next_activity.get("title", ""))
             next_activity["duration"] = max(safe_int(next_activity.get("duration"), 90), settings.MIN_ACTIVITY_DURATION)
             next_activity["cost_estimate"] = safe_int(next_activity.get("cost_estimate"), 0)
-            next_activity["ticket_price"] = safe_int(next_activity.get("ticket_price"), 0)
+            # The finalizer uses 0 when the price is unknown. It is not proof
+            # that admission is free.
+            ticket_price = safe_int(next_activity.get("ticket_price"), 0)
+            next_activity["ticket_price"] = ticket_price if ticket_price > 0 else None
             next_activity.setdefault("tips", "")
             next_activity.setdefault("transportation", "")
             activities.append(next_activity)
@@ -87,15 +91,23 @@ def select_state_candidate_for_activity(
     source_id = str(activity.get("source_id", "") or "").strip()
     location = str(activity.get("location", "")).strip()
     title = str(activity.get("title", "")).strip()
+    kind = str(activity.get("type", "")).strip()
     haystack = f"{title} {location}".strip()
-    pools = [
-        filter_real_candidates(state.get("attraction_candidates", []) or []),
-        filter_real_candidates(state.get("food_candidates", []) or []),
-        filter_real_candidates(
-            state.get("hotel_options", []) or [],
-            allow_sources={"llm_hotel"},
-        ),
-    ]
+    is_food = any(token in kind for token in ("美食", "餐饮")) or (
+        not any(token in kind for token in ("景点", "游览", "文化", "户外"))
+        and any(token in title for token in ("早餐", "午餐", "晚餐"))
+    )
+    if any(token in kind for token in ("交通", "住宿")):
+        return None
+    if is_food:
+        pools = [filter_real_candidates(state.get("food_candidates", []) or [])]
+    elif kind:
+        pools = [filter_real_candidates(state.get("attraction_candidates", []) or [])]
+    else:
+        pools = [
+            filter_real_candidates(state.get("attraction_candidates", []) or []),
+            filter_real_candidates(state.get("food_candidates", []) or []),
+        ]
     for pool in pools:
         for item in pool:
             name = str(item.get("name", "")).strip()
@@ -186,8 +198,16 @@ def enrich_activity_with_poi(activity: Dict[str, Any], poi: Dict[str, Any], city
         enriched["avg_cost"] = safe_int(poi.get("avg_cost"), 0)
     if poi.get("price") and not enriched.get("reference_price"):
         enriched["reference_price"] = poi.get("price")
-    if poi.get("image_url") and not enriched.get("image"):
-        enriched["image"] = poi.get("image_url")
+    image_url = normalize_image_url(poi.get("image_url") or poi.get("image"))
+    if image_url:
+        enriched["image"] = image_url
+        enriched["image_source_id"] = str(poi.get("id", "") or "").strip()
+        enriched["image_source_name"] = name
+    else:
+        enriched.pop("image", None)
+        enriched.pop("image_url", None)
+        enriched.pop("image_source_id", None)
+        enriched.pop("image_source_name", None)
     if not enriched.get("story"):
         enriched["story"] = f"{name or city}来自 POI 查询结果。"
     return enriched

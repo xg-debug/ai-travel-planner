@@ -1,5 +1,7 @@
 # Agent 与 Harness 重构设计
 
+> 实现状态说明（2026-10-24）：本文记录重构目标与当时的判断。当前 `TripPlanningWorkflow` 实际接入 `PlanExecuteReplanAgent`；`MCPAgentTripPlanner` 中的 ReAct 实现尚未接入默认规划入口。
+
 更新时间：2026-09-02
 
 ## 1. 现状判断

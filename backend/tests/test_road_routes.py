@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from app.domain.travel_domain import TravelDomainService
+from app.services.map_route_service import plan_day_map_route
 from app.services.amap_road_routes import fetch_road_route
 from app.mcp_tools.amap_provider import AMapMCPError
 from app.services.runtime_config import LLM_PROVIDERS, get_llm_provider
@@ -98,6 +99,42 @@ class RoadRouteTests(unittest.TestCase):
             with self.assertRaises(AMapMCPError) as error:
                 fetch_road_route('120,30', '120.004,30.004', 'walking')
         self.assertNotIn('private-key', str(error.exception))
+
+    def test_day_route_skips_invalid_coordinates_before_planning(self):
+        route = {'distance': 1200, 'duration': 900, 'provider': 'amap_web_service', 'geometry_available': True,
+                 'polylines': [[{'latitude': 30, 'longitude': 120}, {'latitude': 30.1, 'longitude': 120.1}]]}
+        with patch('app.services.map_route_service.travel_domain_service.calculate_route', return_value=route) as calculate:
+            result = plan_day_map_route(
+                [
+                    {'latitude': 30.0, 'longitude': 120.0},
+                    {'latitude': 0, 'longitude': 0},
+                    {'latitude': 30.1, 'longitude': 120.1},
+                ],
+                'walking',
+                city='杭州',
+            )
+
+        self.assertEqual(result['invalid_points'], 1)
+        self.assertTrue(result['geometry_available'])
+        calculate.assert_called_once_with('120.0,30.0', '120.1,30.1', 'walking', city='', cityd='')
+
+    def test_day_route_without_geometry_does_not_invent_polyline(self):
+        route = {'distance': 1200, 'duration': 900, 'provider': 'amap_mcp', 'geometry_available': False,
+                 'polylines': [], 'polyline': [], 'instructions': ['沿道路步行']}
+        with patch('app.services.map_route_service.travel_domain_service.calculate_route', return_value=route):
+            result = plan_day_map_route(
+                [
+                    {'latitude': 30.0, 'longitude': 120.0},
+                    {'latitude': 30.1, 'longitude': 120.1},
+                ],
+                'walking',
+                city='杭州',
+            )
+
+        self.assertFalse(result['geometry_available'])
+        self.assertEqual(result['polyline'], [])
+        self.assertEqual(result['legs'][0]['polylines'], [])
+        self.assertIn('暂未取得道路折线', result['warning'])
 
 
 if __name__ == '__main__': unittest.main()

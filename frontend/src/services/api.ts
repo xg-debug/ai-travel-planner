@@ -169,7 +169,7 @@ export interface PlanProgressEvent {
 
 interface PlanJobResponse {
   job_id: string
-  status: 'running' | 'completed' | 'failed'
+  status: 'queued' | 'running' | 'completed' | 'failed'
   step?: string
   message?: string
   progress?: number
@@ -224,6 +224,7 @@ export interface MapRouteResponse {
 }
 
 const PLAN_MAX_WAIT_MS = 30 * 60 * 1000
+const ACTIVE_PLAN_JOB_KEY = 'cybertravel_active_plan_job'
 const wait = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
 export const tripApi = {
@@ -258,12 +259,15 @@ export const tripApi = {
     return api.post('/trip/planning', request, { timeout: PLAN_MAX_WAIT_MS })
   },
 
-  async startPlanTripJob(request: PlanTripRequest): Promise<{ job_id: string; status: string }> {
+  async startPlanTripJob(request: PlanTripRequest): Promise<{ job_id: string; status: string; guest_token?: string }> {
     return api.post('/trip/planning/jobs', request, { timeout: 30000 })
   },
 
-  async getPlanTripJob(jobId: string): Promise<PlanJobResponse> {
-    return api.get(`/trip/planning/jobs/${jobId}`, { timeout: 30000 })
+  async getPlanTripJob(jobId: string, guestToken?: string): Promise<PlanJobResponse> {
+    return api.get(`/trip/planning/jobs/${jobId}`, {
+      timeout: 30000,
+      headers: guestToken ? { 'X-Planning-Token': guestToken } : {}
+    })
   },
 
   async listTripPlans(): Promise<any[]> {
@@ -280,6 +284,10 @@ export const tripApi = {
 
   async updateTripPlan(id: string, payload: any): Promise<any> {
     return (await api.put(`/trip/plans/${id}`, payload)) as any
+  },
+
+  async updateTripDay(id: string, dayIndex: number, version: number, day: any): Promise<any> {
+    return (await api.patch(`/trip/plans/${id}/days/${dayIndex}`, { version, day })) as any
   },
 
   async deleteTripPlan(id: string): Promise<{ ok: boolean }> {
@@ -377,8 +385,28 @@ export const tripApi = {
     request: PlanTripRequest,
     onProgress?: (event: PlanProgressEvent) => void
   ): Promise<TripResponse> {
-    const started = await this.startPlanTripJob(request)
-    if (!started.job_id) throw new Error('规划任务启动失败，请稍后重试')
+    const requestKey = JSON.stringify(request)
+    let jobId = ''
+    let guestToken = ''
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(ACTIVE_PLAN_JOB_KEY) || '{}')
+      if (saved.requestKey === requestKey && saved.jobId) {
+        jobId = String(saved.jobId)
+        guestToken = String(saved.guestToken || '')
+        await this.getPlanTripJob(jobId, guestToken)
+      }
+    } catch (error) {
+      if (jobId && !String(error).includes('不存在或已过期')) throw error
+      jobId = ''
+      sessionStorage.removeItem(ACTIVE_PLAN_JOB_KEY)
+    }
+    if (!jobId) {
+      const started = await this.startPlanTripJob(request)
+      if (!started.job_id) throw new Error('规划任务启动失败，请稍后重试')
+      jobId = started.job_id
+      guestToken = started.guest_token || ''
+      sessionStorage.setItem(ACTIVE_PLAN_JOB_KEY, JSON.stringify({ requestKey, jobId, guestToken }))
+    }
     const deadline = Date.now() + PLAN_MAX_WAIT_MS
     let failureCount = 0
     let pollCount = 0
@@ -386,7 +414,7 @@ export const tripApi = {
       await wait(pollCount++ < 5 ? 1000 : 2500)
       let job: PlanJobResponse
       try {
-        job = await this.getPlanTripJob(started.job_id)
+        job = await this.getPlanTripJob(jobId, guestToken)
         failureCount = 0
       } catch (error) {
         failureCount += 1
@@ -401,9 +429,13 @@ export const tripApi = {
       })
       if (job.status === 'completed') {
         if (!job.result) throw new Error('规划任务已完成，但未返回行程结果')
+        sessionStorage.removeItem(ACTIVE_PLAN_JOB_KEY)
         return job.result
       }
-      if (job.status === 'failed') throw new Error(job.error || '行程规划失败，请稍后重试')
+      if (job.status === 'failed') {
+        sessionStorage.removeItem(ACTIVE_PLAN_JOB_KEY)
+        throw new Error(job.error || '行程规划失败，请稍后重试')
+      }
     }
     throw new Error('规划任务等待超时，请稍后重试')
   },

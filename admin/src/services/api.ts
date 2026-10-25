@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { AdminOverview, AdminUser, RuntimeStatus, AuthResponse } from '@/types/admin'
+import type { AdminOverview, AdminUser, RuntimeStatus, AuthResponse, AgentRunPage, AgentRunDetail } from '@/types/admin'
 
 const AUTH_STORAGE_KEY = 'travel_admin_auth'
 
@@ -66,6 +66,14 @@ export const adminApi = {
 
   async getRuntimeStatus(): Promise<RuntimeStatus> {
     return (await api.get('/admin/runtime-status')) as RuntimeStatus
+  },
+
+  async listAgentRuns(params?: { page?: number; page_size?: number; status?: string; search?: string }): Promise<AgentRunPage> {
+    return (await api.get('/admin/agent-runs', { params })) as AgentRunPage
+  },
+
+  async getAgentRun(runId: string): Promise<AgentRunDetail> {
+    return (await api.get(`/admin/agent-runs/${runId}`)) as AgentRunDetail
   },
 
   async updateSettings(payload: {

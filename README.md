@@ -36,13 +36,15 @@ AI Travel Planner 把大模型的行程编排能力和真实地图数据结合�
 
 | 能力 | 说明 |
 | --- | --- |
-| AI 多日行程 | 根据出发地、目的地、日期、预算、人数和兴趣生成可调整的每日安排。 |
+| AI 多日行程 | 根据出发地、目的地、日期、预算、人数和兴趣生成每日安排；采用有条件的多轮 Plan-Execute，候选不足时定向补查，超预算时尝试修复。 |
 | 真实 POI 核验 | 对候选景点、酒店和餐饮按 POI ID 补全地址、坐标、营业信息和详情。 |
 | 周边餐饮 | 以景点或酒店坐标搜索附近餐饮，让每日安排更顺路。 |
 | 多种交通方式 | 支持自动推荐、步行、驾车、骑行与公交；规划、Web 地图和小程序地图复用同一份路线数据。 |
 | 真实地图 | Web 使用 Leaflet + OpenStreetMap 底图；小程序使用微信原生地图。没有道路坐标时只显示地点，不用直线伪造路线。 |
 | 专属地图导出 | 将多天行程导出到高德专属地图，并提供地点唤端链接。 |
-| 可追踪规划过程 | 支持 SSE 和异步任务两种进度通道，显示 Agent 的真实规划状态。 |
+| 可恢复的异步规划 | 任务、进度、阶段检查点和 Worker 租约保存在 MySQL，进程中断后可继续执行；Web 与小程序可轮询任务状态。 |
+| 行程编辑 | Web 支持按日修改活动并重新核算预算，版本号防止覆盖其他编辑，可撤销最近一次修改。 |
+| Agent 运行轨迹 | 管理后台按每次运行和重试查看阶段、模型调用、工具调用、耗时、token 用量及结果摘要。 |
 | 运行时管理 | 管理后台可维护模型选择、地图服务配置和运行状态。 |
 
 ## 地图与路线
@@ -62,6 +64,8 @@ AI Travel Planner 把大模型的行程编排能力和真实地图数据结合�
 
 ## 技术架构
 
+同步与 SSE 接口通过 `TripPlanningWorkflow → TripPlanningHarness → PlanExecuteReplanAgent` 运行。Web 和小程序默认使用数据库规划任务，由独立 Worker 执行；Agent 先执行一次工具计划，候选不足时只补查缺口，预算超额时尝试调整可替换项目。任务进度和阶段检查点存入 MySQL，Worker 中断后由租约机制接管。每次运行的轨迹独立持久化，重试对应新的运行记录。轨迹只保留有界摘要，不保存完整提示词、完整模型响应或 API Key。MCP ReAct 实现未接入默认入口。
+
 ```mermaid
 flowchart LR
     U[旅行者] --> W[Web 端 Vue 3]
@@ -70,12 +74,15 @@ flowchart LR
     W --> B[FastAPI]
     M --> B
     C --> B
-    B --> P[规划 Agent<br/>Plan → Execute → Finalize]
+    B --> P[规划 Agent<br/>Plan → Execute → 按需补查 → Finalize]
     P --> L[LLM Provider<br/>DeepSeek / OpenAI / Anthropic / Google]
     P --> G[高德 MCP]
     G --> R[高德路线 Web 服务<br/>可选道路坐标补充]
-    B --> D[(MySQL)]
-    B --> K[(Redis / 内存缓存)]
+    B --> D[(MySQL：行程、Agent 轨迹)]
+    B --> K[(Redis / 本地内存：查询缓存)]
+    B --> J[(MySQL：规划任务与检查点)]
+    J --> X[独立规划 Worker]
+    X --> P
 ```
 
 ## 快速开始
@@ -111,6 +118,16 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+异步规划还需要在另一终端启动 Worker：
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.trip_planning.worker
+```
+
+已有数据库先执行 `backend/migrations/2026-10-25_planning_jobs.sql`、`backend/migrations/2026-10-25_trip_plan_version.sql` 和 `backend/migrations/2026-10-25_agent_traces.sql`。新数据库使用上面的 `schema.sql` 即可。API 和 Worker 必须连接同一个 MySQL；Redis 用于地图查询缓存，暂不可用时回退到本地内存缓存。管理后台的“Agent 轨迹”可查看每次运行和重试的阶段、模型及工具调用、耗时、token 用量和结果摘要。
+
 最小地图和模型配置示例：
 
 ```env
@@ -118,7 +135,7 @@ DATABASE_URL=mysql+pymysql://root:your_mysql_password@127.0.0.1:3306/ai_travel_p
 SECRET_KEY=replace-with-a-long-random-secret
 
 DEFAULT_LLM_PROVIDER=deepseek
-DEFAULT_LLM_MODEL=deepseek-chat
+DEFAULT_LLM_MODEL=deepseek-flash
 DEEPSEEK_API_KEY=your_deepseek_key
 
 MAP_PROVIDER=amap_mcp
@@ -192,12 +209,16 @@ ai-travel-planner/
 | --- | --- |
 | `POST /api/trip/planning` | 创建行程规划 |
 | `POST /api/trip/planning/stream` | 流式接收规划进度 |
-| `POST /api/trip/planning/jobs` | 创建异步规划任务 |
+| `POST /api/trip/planning/jobs` | 创建异步规划任务；未登录时返回访客凭证 |
+| `GET /api/trip/planning/jobs/{job_id}` | 查询任务状态与最终结果；访客需带 `X-Planning-Token` 请求头 |
 | `GET /api/trip/plans` | 获取已保存行程 |
+| `PATCH /api/trip/plans/{plan_id}/days/{day_index}` | 修改已保存行程的单日安排，校验版本号并重新核算预算 |
 | `POST /api/trip/route/map` | 按交通方式计算每日道路路线 |
 | `POST /api/trip/map/around` | 基于坐标搜索附近餐饮等 POI |
 | `GET /api/trip/map/pois/{poi_id}` | 查询地点详情 |
 | `POST /api/trip/map/export` | 导出高德专属地图 |
+| `GET /api/admin/agent-runs` | 管理员分页查询 Agent 运行记录 |
+| `GET /api/admin/agent-runs/{run_id}` | 管理员查看某次运行的事件时间线 |
 
 完整接口定义可在启动后访问 `/api/docs`。
 

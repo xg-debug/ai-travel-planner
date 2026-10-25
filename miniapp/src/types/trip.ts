@@ -210,6 +210,7 @@ export interface BudgetBreakdown {
 }
 
 export interface Trip {
+  version?: number
   planningWarnings?: string[]
   id: string
   departureCity?: string
@@ -227,7 +228,7 @@ export interface Trip {
   dailyBudgets?: DailyBudget[]
   intercityTransport?: IntercityTransportPlan
   riskNotices?: RiskNotice[]
-  qualityScore?: Record<string, number>
+  qualityScore?: PlanningQuality
   plan?: string
   createdAt: string
   updatedAt: string
@@ -296,11 +297,27 @@ export interface TripResponse {
   daily_budgets?: DailyBudget[]
   risk_notices?: RiskNotice[]
   weather_impacts?: Array<Record<string, any>>
-  quality_score?: Record<string, number>
+  quality_score?: PlanningQuality
   intercity_transport?: Record<string, any>
 }
 
 export type PlanTripRequest = TripRequest
+
+export interface PlanningQuality {
+  score: number
+  verified_location_ratio: number
+  day_coverage_ratio: number
+  meal_coverage_ratio: number
+  hotel_coverage_ratio: number
+  route_coverage_ratio: number
+  unique_location_ratio: number
+  verified_poi_count: number
+  poi_count: number
+  verified_attraction_count: number
+  attraction_count: number
+  review: string
+  issues: string[]
+}
 
 export interface AuthUser {
   id: string

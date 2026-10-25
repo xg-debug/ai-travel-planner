@@ -36,6 +36,8 @@
           <p v-for="warning in trip.planningWarnings" :key="warning">{{ warning }}</p>
         </div>
 
+        <div v-if="editError" role="alert" class="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{{ editError }}</div>
+
         <div class="mb-8 grid gap-6 lg:grid-cols-3">
           <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
             <h2 class="mb-3 text-lg font-bold text-gray-900">行程概览</h2>
@@ -98,6 +100,7 @@
                 <h2 class="text-2xl text-blue-900 font-bold">第 {{ activeDayIndex + 1 }} 天</h2>
                 <div class="flex space-x-3">
                   <span class="text-gray-500 self-center mr-2">当日花费: ¥{{ calculateDayCost(activeDay) }}</span>
+                  <button v-if="lastDayEdit?.tripId === trip.id && lastDayEdit.index === activeDayIndex" @click="undoLastDayEdit" class="px-3 py-1 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">撤销上次修改</button>
                   <button @click="isEditingActivities = !isEditingActivities" class="px-3 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50">
                     {{ isEditingActivities ? '完成编辑' : '编辑排序' }}
                   </button>
@@ -386,7 +389,7 @@ import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
 import TravelNav from '@/components/TravelNav.vue'
 import AuthModal from '@/components/AuthModal.vue'
-import type { Activity } from '@/types/trip'
+import type { Activity, TripDay } from '@/types/trip'
 
 // ===== 基础定义 =====
 const route = useRoute()
@@ -573,6 +576,24 @@ const mealCuisineHint = (activity: Activity | any) => {
 }
 
 const showActivityModal = ref(false)
+const editError = ref('')
+const lastDayEdit = ref<{ tripId: string; index: number; day: TripDay } | null>(null)
+
+const rememberDay = (day: TripDay) => {
+  if (trip.value) lastDayEdit.value = { tripId: trip.value.id, index: activeDayIndex.value, day: JSON.parse(JSON.stringify(day)) as TripDay }
+}
+
+const undoLastDayEdit = async () => {
+  const previous = lastDayEdit.value
+  if (!previous || previous.tripId !== trip.value?.id) return
+  try {
+    editError.value = ''
+    await tripStore.updateTripDay(previous.index, previous.day)
+    lastDayEdit.value = null
+  } catch (error) {
+    editError.value = error instanceof Error ? error.message : '撤销失败'
+  }
+}
 const editingActivityIndex = ref(-1)
 const activityForm = ref<Omit<Activity, 'id'>>({
   time: '09:00',
@@ -635,6 +656,7 @@ const openActivityModal = (index = -1) => {
 // 保存活动（修复原版突变 computed 属性的问题）
 const saveActivity = async () => {
   if (!trip.value || !activeDay.value || !activityForm.value.title) return
+  editError.value = ''
   
   // 深拷贝当前活动列表
   const newActivities = [...activeDay.value.activities]
@@ -647,12 +669,14 @@ const saveActivity = async () => {
   // 按时间排序
   newActivities.sort((a, b) => a.time.localeCompare(b.time))
 
-  // 深拷贝整个 Days 数组并替换，通过 Store 统一更新以保证数据流清晰
-  const newDays = [...trip.value.days]
-  newDays[activeDayIndex.value] = { ...activeDay.value, activities: newActivities }
-  
-  await tripStore.updateTrip({ ...trip.value, days: newDays })
-  showActivityModal.value = false
+  try {
+    const previous = activeDay.value
+    await tripStore.updateTripDay(activeDayIndex.value, { ...activeDay.value, activities: newActivities })
+    rememberDay(previous)
+    showActivityModal.value = false
+  } catch (error) {
+    editError.value = error instanceof Error ? error.message : '保存活动失败'
+  }
 }
 
 // 移动活动排序
@@ -663,9 +687,14 @@ const moveActivity = async (index: number, direction: -1 | 1) => {
   
   if (targetIndex >= 0 && targetIndex < newActivities.length) {
     [newActivities[index], newActivities[targetIndex]] = [newActivities[targetIndex], newActivities[index]]
-    const newDays = [...trip.value.days]
-    newDays[activeDayIndex.value] = { ...activeDay.value, activities: newActivities }
-    await tripStore.updateTrip({ ...trip.value, days: newDays })
+    try {
+      editError.value = ''
+      const previous = activeDay.value
+      await tripStore.updateTripDay(activeDayIndex.value, { ...activeDay.value, activities: newActivities })
+      rememberDay(previous)
+    } catch (error) {
+      editError.value = error instanceof Error ? error.message : '调整顺序失败'
+    }
   }
 }
 
@@ -673,9 +702,14 @@ const removeActivity = async (index: number) => {
   if (!activeDay.value || !trip.value || !confirm('确定要删除这个活动吗？')) return
   const newActivities = [...activeDay.value.activities]
   newActivities.splice(index, 1)
-  const newDays = [...trip.value.days]
-  newDays[activeDayIndex.value] = { ...activeDay.value, activities: newActivities }
-  await tripStore.updateTrip({ ...trip.value, days: newDays })
+  try {
+    editError.value = ''
+    const previous = activeDay.value
+    await tripStore.updateTripDay(activeDayIndex.value, { ...activeDay.value, activities: newActivities })
+    rememberDay(previous)
+  } catch (error) {
+    editError.value = error instanceof Error ? error.message : '删除活动失败'
+  }
 }
 
 
@@ -691,10 +725,15 @@ const adjustBudget = async (categoryName: string, amount: number) => {
   })
   const newTotal = newCategories.reduce((sum: number, cat: any) => sum + cat.amount, 0)
 
-  await tripStore.updateTrip({
-    ...trip.value,
-    budget: { ...trip.value.budget, categories: newCategories, total: newTotal }
-  })
+  try {
+    editError.value = ''
+    await tripStore.updateTrip({
+      ...trip.value,
+      budget: { ...trip.value.budget, categories: newCategories, total: newTotal }
+    })
+  } catch (error) {
+    editError.value = error instanceof Error ? error.message : '更新预算失败'
+  }
 }
 
 

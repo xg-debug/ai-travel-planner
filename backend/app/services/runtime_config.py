@@ -11,7 +11,13 @@ from app.core.database import SessionLocal
 from app.models.admin import RuntimeSetting
 
 
-DEEPSEEK_FIXED_MODEL = "deepseek-v4-flash"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-flash"
+DEEPSEEK_MODELS = {"deepseek-flash", "deepseek-v4-pro"}
+DEEPSEEK_LEGACY_MODELS = {
+    "deepseek-chat": DEEPSEEK_DEFAULT_MODEL,
+    "deepseek-reasoner": DEEPSEEK_DEFAULT_MODEL,
+    "deepseek-v4-flash": DEEPSEEK_DEFAULT_MODEL,
+}
 
 LLM_PROVIDERS = {
     "openai": {
@@ -36,7 +42,8 @@ LLM_PROVIDERS = {
         "label": "DeepSeek",
         "api_key_setting": "llm.deepseek.api_key",
         "env_attr": "DEEPSEEK_API_KEY",
-        "default_model": DEEPSEEK_FIXED_MODEL,
+        "default_model": DEEPSEEK_DEFAULT_MODEL,
+        "models": ["deepseek-flash", "deepseek-v4-pro"],
     },
 }
 
@@ -133,9 +140,9 @@ def get_llm_provider(db: Session | None = None) -> str:
 
 
 def normalize_llm_model(provider: str, model: str | None = None) -> str:
-    if provider == "deepseek":
-        return DEEPSEEK_FIXED_MODEL
     model = (model or "").strip()
+    if provider == "deepseek":
+        return DEEPSEEK_LEGACY_MODELS.get(model, model or DEEPSEEK_DEFAULT_MODEL)
     if model:
         return model
     return LLM_PROVIDERS.get(provider, LLM_PROVIDERS["openai"])["default_model"]
@@ -209,6 +216,7 @@ def build_runtime_config_snapshot(db: Session) -> Dict[str, object]:
                     "id": provider_id,
                     "label": meta["label"],
                     "defaultModel": meta["default_model"],
+                    "models": meta.get("models", []),
                     "model": get_llm_model(provider_id, db),
                     "hasKey": is_present_secret(get_llm_api_key(provider_id, db)),
                     "maskedKey": mask_secret(get_llm_api_key(provider_id, db)),

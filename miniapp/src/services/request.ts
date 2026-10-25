@@ -9,6 +9,7 @@ interface RequestOptions {
   data?: unknown
   params?: Record<string, string | number | boolean | undefined | null>
   timeout?: number
+  headers?: Record<string, string>
 }
 
 const getBaseUrl = () => {
@@ -59,7 +60,8 @@ export function request<T>(options: RequestOptions): Promise<T> {
       timeout: options.timeout || 120000,
       header: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {})
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers
       },
       success: (res) => {
         if (res.statusCode >= 200 && res.statusCode < 300) {

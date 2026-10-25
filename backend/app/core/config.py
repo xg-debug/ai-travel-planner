@@ -74,14 +74,14 @@ class Settings(BaseSettings):
     
     # 模型配置
     DEFAULT_LLM_PROVIDER: str = os.getenv("DEFAULT_LLM_PROVIDER", "deepseek")
-    DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "deepseek-v4-flash")
+    DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "deepseek-flash")
 
     # Centralised provider → default model mapping
     PROVIDER_DEFAULT_MODELS: dict = {
         "openai": "gpt-4o-mini",
         "anthropic": "claude-sonnet-4-6",
         "google": "gemini-2.5-flash",
-        "deepseek": "deepseek-v4-flash",
+        "deepseek": "deepseek-flash",
     }
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))

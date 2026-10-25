@@ -8,9 +8,6 @@ import './styles/main.css'
 
 // Import components
 import TripPlannerView from './views/TripPlannerView.vue'
-import TripDetailsView from './views/TripDetailsView.vue'
-import MapView from './views/MapView.vue'
-import HistoryView from './views/HistoryView.vue'
 
 // Create Pinia store
 const pinia = createPinia()
@@ -28,19 +25,19 @@ const router = createRouter({
     {
       path: '/trip/:id',
       name: 'trip',
-      component: TripDetailsView,
+      component: () => import('./views/TripDetailsView.vue'),
       meta: { title: '行程详情 - 随心游' }
     },
     {
       path: '/map',
       name: 'map',
-      component: MapView,
+      component: () => import('./views/MapView.vue'),
       meta: { title: '旅行地图 - 随心游' }
     },
     {
       path: '/history',
       name: 'history',
-      component: HistoryView,
+      component: () => import('./views/HistoryView.vue'),
       meta: { title: '我的行程 - 随心游', requiresAuth: true }
     }
   ]

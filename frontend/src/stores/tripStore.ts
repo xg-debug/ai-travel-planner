@@ -183,7 +183,69 @@ export const useTripStore = defineStore('trip', () => {
         currentTrip.value = nextTrip
       }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to update trip'
+      const message = err instanceof Error ? err.message : 'Failed to update trip'
+      if (authStore.isAuthenticated && currentTrip.value?.id && message.includes('其他设备更新')) {
+        try {
+          const latest = await tripApi.getTripPlan(currentTrip.value.id) as Trip
+          currentTrip.value = latest
+          tripHistory.value = tripHistory.value.map((item) => item.id === latest.id ? latest : item)
+        } catch {
+          // Keep the original conflict error visible.
+        }
+      }
+      error.value = message
+      throw err
+    }
+  }
+
+  const updateTripDay = async (dayIndex: number, day: TripDay) => {
+    const current = currentTrip.value
+    if (!current || dayIndex < 0 || dayIndex >= current.days.length) return
+    try {
+      let saved: Trip
+      if (authStore.isAuthenticated && current.id) {
+        saved = await tripApi.updateTripDay(current.id, dayIndex, current.version || 1, day) as Trip
+      } else {
+        const days = [...current.days]
+        const updatedDay = { ...day, routeNeedsRefresh: true }
+        const oldActivities = current.days[dayIndex].activities || []
+        const newActivities = updatedDay.activities || []
+        const categoryName = (activity: Activity) => ({ food: '餐饮', transport: '交通', shopping: '购物' } as Record<string, string>)[activity.type] || '门票'
+        const cost = (activity: Activity) => Math.max(0, Number(activity.cost) || (Number(activity.ticketPrice) || 0) * current.travelers)
+        const delta = new Map<string, number>()
+        for (const activity of oldActivities) delta.set(categoryName(activity), (delta.get(categoryName(activity)) || 0) - cost(activity))
+        for (const activity of newActivities) delta.set(categoryName(activity), (delta.get(categoryName(activity)) || 0) + cost(activity))
+        updatedDay.totalCost = newActivities.reduce((sum, activity) => sum + cost(activity), 0)
+        days[dayIndex] = updatedDay
+        const categories = current.budget.categories.map((category) => ({
+          ...category,
+          amount: Math.max(0, category.amount + (delta.get(category.name) || 0))
+        }))
+        for (const [name, amount] of delta) {
+          if (amount > 0 && !categories.some((category) => category.name === name)) {
+            categories.push({ name, amount, planned: 0 })
+          }
+        }
+        saved = {
+          ...current, days,
+          budget: { ...current.budget, categories, total: categories.reduce((sum, category) => sum + category.amount, 0) },
+          updatedAt: new Date().toISOString()
+        }
+      }
+      currentTrip.value = saved
+      tripHistory.value = tripHistory.value.map((item) => item.id === saved.id ? saved : item)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '更新行程失败'
+      if (authStore.isAuthenticated && current.id && message.includes('其他设备更新')) {
+        try {
+          const latest = await tripApi.getTripPlan(current.id) as Trip
+          currentTrip.value = latest
+          tripHistory.value = tripHistory.value.map((item) => item.id === latest.id ? latest : item)
+        } catch {
+          // Preserve the original conflict message if refreshing also fails.
+        }
+      }
+      error.value = message
       throw err
     }
   }
@@ -536,7 +598,7 @@ export const useTripStore = defineStore('trip', () => {
     const normalizedType = mapActivityType(activity.type || fallbackTheme)
     const poi = findPoiByLocation(activity.location || '', poiMap)
     const ticketPrice = normalizeTicketPrice(activity, poi, normalizedType)
-    const ticketLabel = buildTicketLabel(activity, poi, ticketPrice)
+    const ticketLabel = buildTicketLabel(activity, poi, ticketPrice, normalizedType)
     const activityCoordinates = activity.coordinates || {}
     const lat = Number(poi?.lat ?? activityCoordinates.lat)
     const lng = Number(poi?.lng ?? activityCoordinates.lng)
@@ -629,17 +691,16 @@ export const useTripStore = defineStore('trip', () => {
   }
 
   const normalizeTicketPrice = (activity: any, poi: any, type: Activity['type']): number | undefined => {
-    const explicit = parseNumericPrice(activity.ticket_price ?? activity.ticketPrice)
-    if (explicit !== undefined) return ['food', 'transport'].includes(type) ? undefined : explicit
-    const poiPrice = parseNumericPrice(poi?.price)
-    if (poiPrice !== undefined && ['culture', 'outdoor', 'entertainment', 'other'].includes(type)) return poiPrice
     if (type === 'food' || type === 'transport') return undefined
-    if (Number(activity.cost_estimate ?? activity.cost) === 0) return 0
-    return ['culture', 'outdoor', 'entertainment', 'other'].includes(type) ? (parseNumericPrice(activity.cost_estimate ?? activity.cost) ?? undefined) : undefined
+    if (activity.ticket_is_free === true || activity.ticketIsFree === true) return 0
+    const explicit = parseNumericPrice(activity.ticket_price ?? activity.ticketPrice)
+    if (explicit !== undefined && explicit > 0) return explicit
+    const poiPrice = parseNumericPrice(poi?.price)
+    return poiPrice !== undefined && poiPrice > 0 ? poiPrice : undefined
   }
 
-  const buildTicketLabel = (activity: any, poi: any, ticketPrice?: number): string | undefined => {
-    if (ticketPrice === undefined) return undefined
+  const buildTicketLabel = (activity: any, poi: any, ticketPrice: number | undefined, type: Activity['type']): string | undefined => {
+    if (ticketPrice === undefined) return ['culture', 'outdoor', 'entertainment'].includes(type) ? '门票待核实' : undefined
     if (ticketPrice <= 0) return '门票免费'
     const raw = String(activity.ticket_note || poi?.price || '').trim()
     return raw && raw !== '0' ? `门票 ${raw}` : `门票 ¥${ticketPrice}`
@@ -684,6 +745,7 @@ export const useTripStore = defineStore('trip', () => {
     // Actions
     createTrip,
     updateTrip,
+    updateTripDay,
     deleteTrip,
     loadTrip,
     loadTripsFromServer,
